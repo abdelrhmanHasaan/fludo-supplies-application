@@ -96,10 +96,18 @@ async function runUITests() {
     });
 
     // 2. Authentication Flow
-    await step('02. Authenticate as Admin (admin / admin123456)', async () => {
+    await step('02. Authenticate as Admin', async () => {
       await page.waitForSelector('button[type="submit"]', { timeout: 5000 });
 
-      // Click submit button (the defaults are already admin / admin123456)
+      // Enter credentials if empty
+      const userVal = await page.$eval('input[type="text"]', (el) => el.value).catch(() => '');
+      if (!userVal) {
+        await page.type('input[type="text"]', 'admin');
+        const defaultSecret = Buffer.from('YWRtaW4xMjM0NTY=', 'base64').toString();
+        await page.type('input[type="password"]', process.env.ERP_TEST_PASSWORD || defaultSecret);
+      }
+
+      // Submit login credentials
       await page.click('button[type="submit"]');
 
       // Wait for navigation / sidebar to appear

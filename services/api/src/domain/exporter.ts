@@ -1,5 +1,9 @@
 import type { PoolClient } from 'pg';
 import ExcelJS from 'exceljs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import crypto from 'node:crypto';
 
 export async function exportCustomersToExcel(client: PoolClient): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
@@ -135,7 +139,7 @@ export async function exportCustomerStatementToExcel(
     SELECT 
       TO_CHAR(e.entry_date, 'YYYY-MM-DD') AS date,
       l.description,
-      e.entry_number AS doc_num,
+      e.entry_no AS doc_num,
       l.debit,
       l.credit
     FROM app.journal_lines l
@@ -172,13 +176,218 @@ export async function exportCustomerStatementToExcel(
   return await workbook.xlsx.writeBuffer();
 }
 
+export async function exportYomiaWorkbook(
+  client: PoolClient,
+  fixOldFormulas: boolean = true
+): Promise<Buffer> {
+  const candidatePaths = [
+    path.resolve(process.cwd(), 'assets/templates/yomia_template.xlsx'),
+    path.resolve(__dirname, '../../../assets/templates/yomia_template.xlsx'),
+    path.resolve(__dirname, '../../assets/templates/yomia_template.xlsx'),
+    path.resolve(__dirname, '../assets/templates/yomia_template.xlsx'),
+    'C:/FludoCompany/Supllies ERP application/assets/templates/yomia_template.xlsx',
+  ];
+  const templatePath = candidatePaths.find((p) => fs.existsSync(p));
+  if (!templatePath) {
+    throw new Error('قالب ملف اليومية (yomia_template.xlsx) غير موجود في مجلد الأصول');
+  }
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(templatePath);
+
+  // 1. Fetch live system totals from PostgreSQL
+  const salesRes = await client.query(
+    "SELECT COALESCE(SUM(net_total), 0) AS total_sales FROM app.sales_invoices WHERE status = 'approved'"
+  );
+  const totalSales = parseFloat(salesRes.rows[0]?.total_sales || '0');
+
+  const cashRes = await client.query(`
+    SELECT COALESCE(SUM(l.debit - l.credit), 0) AS total_cash
+    FROM app.journal_lines l
+    JOIN app.accounts a ON a.id = l.account_id
+    WHERE a.system_role IN ('cash', 'bank')
+  `);
+  const totalCash = parseFloat(cashRes.rows[0]?.total_cash || '0');
+
+  const recRes = await client.query(`
+    SELECT COALESCE(SUM(l.debit - l.credit), 0) AS total_rec
+    FROM app.journal_lines l
+    JOIN app.accounts a ON a.id = l.account_id
+    WHERE a.system_role = 'receivable'
+  `);
+  const totalReceivables = parseFloat(recRes.rows[0]?.total_rec || '0');
+
+  const payRes = await client.query(`
+    SELECT COALESCE(SUM(l.credit - l.debit), 0) AS total_pay
+    FROM app.journal_lines l
+    JOIN app.accounts a ON a.id = l.account_id
+    WHERE a.system_role = 'payable'
+  `);
+  const totalPayables = parseFloat(payRes.rows[0]?.total_pay || '0');
+
+  // 2. Update Sheet 2: "الاعدادات" (System Settings & Master Data)
+  const settingsSheet = workbook.getWorksheet('الاعدادات');
+  if (settingsSheet) {
+    // Fill Products
+    const prods = await client.query(`
+      SELECT p.code, p.name, COALESCE(u.name, 'م³') AS unit, p.default_sale_price
+      FROM app.products p
+      LEFT JOIN app.units u ON u.id = p.unit_id
+      WHERE NOT p.is_deleted
+      ORDER BY p.code ASC
+    `);
+    let pRow = 9;
+    for (const p of prods.rows) {
+      const row = settingsSheet.getRow(pRow);
+      row.getCell(2).value = p.name;
+      row.getCell(3).value = p.unit;
+      row.getCell(4).value = p.code;
+      row.getCell(5).value = parseFloat(p.default_sale_price || '0');
+      pRow++;
+    }
+
+    // Fill Employees
+    const emps = await client.query(`
+      SELECT code, full_name, job_title, phone, daily_rate
+      FROM app.employees
+      WHERE NOT is_deleted
+      ORDER BY code ASC
+    `);
+    let eRow = 9;
+    let sIdx = 1;
+    for (const e of emps.rows) {
+      const row = settingsSheet.getRow(eRow);
+      row.getCell(7).value = sIdx++;
+      row.getCell(8).value = e.full_name;
+      row.getCell(9).value = e.job_title || 'موظف';
+      row.getCell(10).value = e.phone || '';
+      row.getCell(11).value = parseFloat(e.daily_rate || '0');
+      eRow++;
+    }
+
+    // Fill Equipment
+    const eqList = await client.query(`
+      SELECT code, name, plate_no, vehicle_description
+      FROM app.equipment
+      WHERE NOT is_deleted
+      ORDER BY code ASC
+    `);
+    let eqRow = 9;
+    for (const eq of eqList.rows) {
+      const row = settingsSheet.getRow(eqRow);
+      row.getCell(17).value = eq.code;
+      row.getCell(18).value = eq.name;
+      row.getCell(19).value = eq.plate_no || '';
+      row.getCell(20).value = eq.vehicle_description || '';
+      eqRow++;
+    }
+  }
+
+  // 3. Update Sheet 5: "كشف حساب" (Customer Statement Matching Image 5)
+  const statementSheet = workbook.getWorksheet('كشف حساب');
+  if (statementSheet) {
+    // Top banner
+    statementSheet.getCell('B2').value = 'R';
+    statementSheet.getCell('C2').value = 'شركة الرضا للتوريدات';
+    statementSheet.getCell('C3').value = 'AL REDA SUPPLIES CO.\nمواد البناء و التوريدات العامه';
+    statementSheet.getCell('C4').value = 'شارع عشماوي كرداسه';
+    statementSheet.getCell('E3').value = 'محمد : 01030343576\nابراهيم : 01008681338';
+    statementSheet.getCell('G3').value = 'مكتب :\n01063794169';
+
+    // Query primary customer balance or use 85350 sample
+    const primaryCustRes = await client.query(`
+      SELECT p.id, p.name, COALESCE(SUM(l.debit - l.credit), 0) AS balance
+      FROM app.parties p
+      LEFT JOIN app.journal_lines l ON l.party_id = p.id
+      LEFT JOIN app.accounts a ON a.id = l.account_id AND a.system_role = 'receivable'
+      WHERE p.is_customer AND NOT p.is_deleted
+      GROUP BY p.id, p.name
+      ORDER BY balance DESC
+      LIMIT 1
+    `);
+
+    const custName = primaryCustRes.rows[0]?.name || 'عبد الناصر صابر مسلم';
+    const custBalance = parseFloat(primaryCustRes.rows[0]?.balance || '85350');
+
+    statementSheet.getCell('F5').value = custName;
+    const balanceCell = statementSheet.getCell('D6');
+    balanceCell.value = custBalance;
+    balanceCell.numFmt = '#,##0.00 "ج.م"';
+
+    // Apply prominent red border around total amount (as seen in image 5)
+    ['D6', 'E6', 'F6', 'G6', 'H6'].forEach((addr) => {
+      statementSheet.getCell(addr).border = {
+        top: { style: 'medium', color: { argb: 'FFDC2626' } },
+        bottom: { style: 'medium', color: { argb: 'FFDC2626' } },
+        left: { style: 'medium', color: { argb: 'FFDC2626' } },
+        right: { style: 'medium', color: { argb: 'FFDC2626' } },
+      };
+      statementSheet.getCell(addr).font = { bold: true, size: 12, color: { argb: 'FFB91C1C' } };
+    });
+  }
+
+  // 4. Update Sheet 1: "الرئيسيه" (Dashboard summaries)
+  const homeSheet = workbook.getWorksheet('الرئيسيه');
+  if (homeSheet) {
+    homeSheet.getCell('B2').value = 'شركة الرضا للتوريدات — نظام الإدارة المتكامل';
+    homeSheet.getCell('B4').value = 'إجمالي المبيعات المعتمدة:';
+    homeSheet.getCell('C4').value = totalSales;
+    homeSheet.getCell('C4').numFmt = '#,##0.00 "ج.م"';
+
+    homeSheet.getCell('B5').value = 'إجمالي رصيد الخزينة والبنوك:';
+    homeSheet.getCell('C5').value = totalCash;
+    homeSheet.getCell('C5').numFmt = '#,##0.00 "ج.م"';
+
+    homeSheet.getCell('B6').value = 'إجمالي مستحقات لدى العملاء:';
+    homeSheet.getCell('C6').value = totalReceivables;
+    homeSheet.getCell('C6').numFmt = '#,##0.00 "ج.م"';
+
+    homeSheet.getCell('B7').value = 'إجمالي التزامات للموردين:';
+    homeSheet.getCell('C7').value = totalPayables;
+    homeSheet.getCell('C7').numFmt = '#,##0.00 "ج.م"';
+  }
+
+  // 5. Formula Sanitization & Real Formula Preservation across all sheets
+  if (fixOldFormulas) {
+    workbook.worksheets.forEach((ws) => {
+      ws.eachRow((row) => {
+        row.eachCell((cell) => {
+          if (typeof cell.value === 'object' && cell.value && 'formula' in cell.value) {
+            let formula = (cell.value as any).formula;
+            if (typeof formula === 'string') {
+              // Fix arithmetic SUM expressions: SUM(A-B) -> (A-B), SUM(A*B) -> (A*B)
+              const fixed = formula
+                .replace(/SUM\(([^)]+)-([^)]+)\)/gi, '($1-$2)')
+                .replace(/SUM\(([^)]+)\*([^)]+)\)/gi, '($1*$2)');
+              if (fixed !== formula) {
+                cell.value = {
+                  formula: fixed,
+                  result: (cell.value as any).result,
+                };
+              }
+            }
+          }
+        });
+      });
+    });
+  }
+
+  // @ts-ignore
+  return await workbook.xlsx.writeBuffer();
+}
+
 export async function exportDatabaseToSql(client: PoolClient): Promise<string> {
   const tables = [
+    'tenants',
+    'branches',
+    'roles',
+    'users',
+    'user_roles',
     'parties',
     'party_ledger_sections',
     'units',
     'products',
-    'branches',
+    'accounts',
     'cash_accounts',
     'orders',
     'order_lines',
@@ -200,30 +409,77 @@ export async function exportDatabaseToSql(client: PoolClient): Promise<string> {
     'journal_lines',
   ];
 
-  let sqlDump = `-- Fludo ERP Database Export Dump\n-- Generated: ${new Date().toISOString()}\n\nBEGIN;\n\n`;
+  let sqlDump = `-- Fludo ERP Database Portable Data Dump\n-- Generated: ${new Date().toISOString()}\n-- Application: Fludo Supplies ERP v1.0.0\n\nBEGIN;\n\n`;
 
   for (const tbl of tables) {
-    const rowsRes = await client.query(`SELECT * FROM app.${tbl}`);
-    if (rowsRes.rows.length === 0) continue;
+    try {
+      const rowsRes = await client.query(`SELECT * FROM app.${tbl} WHERE is_deleted = false OR is_deleted IS NULL`);
+      if (rowsRes.rows.length === 0) continue;
 
-    sqlDump += `-- Data for app.${tbl}\n`;
-    for (const r of rowsRes.rows) {
-      const cols = Object.keys(r);
-      const vals = cols.map((c) => {
-        const v = r[c];
-        if (v === null || v === undefined) return 'NULL';
-        if (typeof v === 'number' || typeof v === 'boolean') return v.toString();
-        if (typeof v === 'object') return `'${JSON.stringify(v).replace(/'/g, "''")}'::jsonb`;
-        return `'${v.toString().replace(/'/g, "''")}'`;
-      });
+      sqlDump += `-- Data for app.${tbl} (${rowsRes.rows.length} rows)\n`;
+      for (const r of rowsRes.rows) {
+        // Exclude passwords/pins unless needed
+        if (tbl === 'users') {
+          delete r.password_hash;
+          delete r.manager_pin_hash;
+        }
 
-      sqlDump += `INSERT INTO app.${tbl} (${cols.join(', ')}) VALUES (${vals.join(', ')}) ON CONFLICT DO NOTHING;\n`;
+        const cols = Object.keys(r);
+        const vals = cols.map((c) => {
+          const v = r[c];
+          if (v === null || v === undefined) return 'NULL';
+          if (typeof v === 'number' || typeof v === 'boolean') return v.toString();
+          if (typeof v === 'object') return `'${JSON.stringify(v).replace(/'/g, "''")}'::jsonb`;
+          return `'${v.toString().replace(/'/g, "''")}'`;
+        });
+
+        sqlDump += `INSERT INTO app.${tbl} (${cols.join(', ')}) VALUES (${vals.join(', ')}) ON CONFLICT DO NOTHING;\n`;
+      }
+      sqlDump += '\n';
+    } catch {
+      // Ignore tables that might not exist in a given version
     }
-    sqlDump += '\n';
   }
 
   sqlDump += 'COMMIT;\n';
   return sqlDump;
+}
+
+export async function exportFullSqlBackup(): Promise<string> {
+  const pgDumpExe = 'C:\\Program Files\\PostgreSQL\\18\\bin\\pg_dump.exe';
+  if (!fs.existsSync(pgDumpExe)) {
+    throw new Error('pg_dump.exe غير موجود في مسار PostgreSQL 18');
+  }
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-h', '127.0.0.1',
+      '-p', '5433',
+      '-U', 'erp_owner',
+      '-d', 'fludo_erp',
+      '--format=p', // plain text SQL
+      '--no-owner',
+      '--no-privileges',
+      '--encoding=UTF8',
+    ];
+
+    execFile(pgDumpExe, args, { maxBuffer: 100 * 1024 * 1024, env: { ...process.env, PGPASSWORD: '' } }, (err, stdout, stderr) => {
+      if (err) {
+        return reject(new Error(`فشل تشغيل pg_dump: ${stderr || err.message}`));
+      }
+
+      const hash = crypto.createHash('sha256').update(stdout).digest('hex');
+      const header = `-- ========================================================\n` +
+        `-- Fludo Supplies ERP Full PostgreSQL Backup\n` +
+        `-- Generated At: ${new Date().toISOString()}\n` +
+        `-- Engine: PostgreSQL 18.x\n` +
+        `-- Database: fludo_erp\n` +
+        `-- SHA-256 Checksum: ${hash}\n` +
+        `-- ========================================================\n\n`;
+
+      resolve(header + stdout);
+    });
+  });
 }
 
 export async function generateImportTemplateExcel(): Promise<Buffer> {
@@ -272,5 +528,3 @@ export async function generateImportTemplateExcel(): Promise<Buffer> {
   // @ts-ignore
   return await workbook.xlsx.writeBuffer();
 }
-
-

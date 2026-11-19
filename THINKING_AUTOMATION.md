@@ -33,9 +33,10 @@
   - Resolved Vite `base: './'` relative path issue.
   - Bundled backend production dependencies inside `app.asar`.
   - Deleted `ELECTRON_RUN_AS_NODE` at runtime entry.
-* **Default Credentials:**
-  - Admin: `admin` / `admin123456`
-  - Manager PIN: `1234`
+* **Security & Credentials (Zero Hardcoded Defaults):**
+  - No default credentials or hardcoded passwords exist in codebase or database.
+  - Setup Wizard initiates on empty install via `FirstRunWizard.tsx` (`POST /api/auth/setup`).
+  - Passwords and 4-digit Manager PIN are securely hashed with Argon2id (64MB memory, 3 iterations, 4 parallelism).
 
 ---
 

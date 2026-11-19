@@ -15,16 +15,22 @@ async function createSalesInvoice(client, params) {
      JOIN app.accounts a ON a.id = l.account_id
      WHERE a.system_role = 'receivable' AND l.party_id = $1`, [params.partyId]);
     const previousBalance = parseFloat(balRes.rows[0]?.balance || '0');
+    // Fetch active branch
+    const branchRes = await client.query("SELECT id FROM app.branches WHERE code = 'MAIN' OR is_active = true LIMIT 1");
+    const branchId = branchRes.rows[0]?.id;
+    if (!branchId)
+        throw new Error('لا يوجد فرع نشط لربط الفاتورة به');
     // 2. Insert invoice header
     const handlingFee = params.handlingFee || 0;
     const invRes = await client.query(`INSERT INTO app.sales_invoices (
-      invoice_no, party_id, invoice_date, status,
+      invoice_no, party_id, branch_id, invoice_date, status,
       handling_fee, previous_balance_snapshot,
       notes
-    ) VALUES ($1, $2, $3, 'draft', $4, $5, $6)
+    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7)
     RETURNING id`, [
         invoiceNumber,
         params.partyId,
+        branchId,
         params.invoiceDate,
         handlingFee,
         previousBalance,
@@ -39,8 +45,8 @@ async function createSalesInvoice(client, params) {
         const unitId = prodRes.rows[0]?.unit_id || null;
         await client.query(`INSERT INTO app.sales_invoice_lines (
         invoice_id, line_no, product_id, unit_id, qty, unit_price,
-        catalog_price_snapshot, line_total, order_line_id, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, [
+        catalog_price_snapshot, order_line_id, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [
             invoiceId,
             lineNo++,
             line.productId,
@@ -48,7 +54,6 @@ async function createSalesInvoice(client, params) {
             line.qty,
             line.unitPrice,
             catalogPrice,
-            Math.round(line.qty * line.unitPrice * 100) / 100,
             line.orderLineId || null,
             line.notes || null,
         ]);
@@ -114,12 +119,19 @@ async function approveSalesInvoice(client, invoiceId, approvedBy, amountPaidNow 
         lines: journalLines,
     });
     // 3. Mark invoice as approved
+    let validApprovedBy = null;
+    if (approvedBy) {
+        const userCheck = await client.query('SELECT id FROM app.users WHERE id = $1', [approvedBy]);
+        if (userCheck.rows.length > 0) {
+            validApprovedBy = approvedBy;
+        }
+    }
     await client.query(`UPDATE app.sales_invoices 
      SET status = 'approved',
          journal_entry_id = $1,
          approved_at = now(),
          approved_by = $2
-     WHERE id = $3`, [journalEntryId, approvedBy, invoiceId]);
+     WHERE id = $3`, [journalEntryId, validApprovedBy, invoiceId]);
     // 4. Handle immediate cash payment if provided
     if (amountPaidNow > 0) {
         const nextPayRes = await client.query("SELECT app.next_doc_number('payment_in') AS num");
@@ -145,23 +157,29 @@ async function approveSalesInvoice(client, invoiceId, approvedBy, amountPaidNow 
                 },
             ],
         });
+        // Fetch active cash account
+        const cashAccRes = await client.query("SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cashbox') DESC, created_at ASC LIMIT 1");
+        const cashAccountId = cashAccRes.rows[0]?.id || null;
         const payRes = await client.query(`INSERT INTO app.payments (
-        payment_no, direction, party_id, payment_date,
-        amount, method, status, journal_entry_id, approved_at, approved_by, notes
-      ) VALUES ($1, 'in', $2, $3, $4, 'cash', 'approved', $5, now(), $6, $7)
+        payment_no, direction, party_id, cash_account_id, payment_date,
+        amount, method, status, journal_entry_id, notes
+      ) VALUES ($1, 'in', $2, $3, $4, $5, 'cash', 'draft', $6, $7)
       RETURNING id`, [
             payNumber,
             inv.party_id,
+            cashAccountId,
             inv.invoice_date,
             amountPaidNow,
             payJournalId,
-            approvedBy,
             `سداد مع فاتورة ${inv.invoice_no}`,
         ]);
         const paymentId = payRes.rows[0].id;
         await client.query(`INSERT INTO app.payment_allocations (
         payment_id, sales_invoice_id, amount
       ) VALUES ($1, $2, $3)`, [paymentId, invoiceId, amountPaidNow]);
+        await client.query(`UPDATE app.payments 
+       SET status = 'approved', approved_at = now(), approved_by = $1 
+       WHERE id = $2`, [validApprovedBy, paymentId]);
     }
 }
 async function cancelSalesInvoice(client, invoiceId, approvalId, reason) {
@@ -194,10 +212,14 @@ async function cancelSalesInvoice(client, invoiceId, approvalId, reason) {
 async function createPurchaseInvoice(client, params) {
     const nextNumRes = await client.query("SELECT app.next_doc_number('purchase_invoice') AS num");
     const invoiceNumber = nextNumRes.rows[0].num;
+    const branchRes = await client.query("SELECT id FROM app.branches WHERE code = 'MAIN' OR is_active = true LIMIT 1");
+    const branchId = branchRes.rows[0]?.id;
+    if (!branchId)
+        throw new Error('لا يوجد فرع نشط لربط إذن الاستلام به');
     const invRes = await client.query(`INSERT INTO app.purchase_invoices (
-      invoice_no, party_id, invoice_date, status, notes
-    ) VALUES ($1, $2, $3, 'approved', $4)
-    RETURNING id`, [invoiceNumber, params.partyId, params.invoiceDate, params.notes || null]);
+      invoice_no, party_id, branch_id, invoice_date, status, notes
+    ) VALUES ($1, $2, $3, $4, 'draft', $5)
+    RETURNING id`, [invoiceNumber, params.partyId, branchId, params.invoiceDate, params.notes || null]);
     const invoiceId = invRes.rows[0].id;
     let lineNo = 1;
     let totalAmount = 0;
@@ -207,8 +229,8 @@ async function createPurchaseInvoice(client, params) {
         const lineTotal = Math.round(line.qty * line.unitPrice * 100) / 100;
         totalAmount += lineTotal;
         await client.query(`INSERT INTO app.purchase_invoice_lines (
-        invoice_id, line_no, product_id, unit_id, qty, unit_price, line_total, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, [invoiceId, lineNo++, line.productId, unitId, line.qty, line.unitPrice, lineTotal, line.notes || null]);
+        invoice_id, line_no, product_id, unit_id, qty, unit_price, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [invoiceId, lineNo++, line.productId, unitId, line.qty, line.unitPrice, line.notes || null]);
         await (0, inventory_js_1.recordStockMovement)(client, {
             productId: line.productId,
             movementType: 'purchase_receipt',
@@ -240,9 +262,6 @@ async function createPurchaseInvoice(client, params) {
             },
         ],
     });
-    await client.query('UPDATE app.purchase_invoices SET journal_entry_id = $1 WHERE id = $2', [
-        journalId,
-        invoiceId,
-    ]);
+    await client.query("UPDATE app.purchase_invoices SET status = 'approved', journal_entry_id = $1, approved_at = now() WHERE id = $2", [journalId, invoiceId]);
     return invoiceId;
 }

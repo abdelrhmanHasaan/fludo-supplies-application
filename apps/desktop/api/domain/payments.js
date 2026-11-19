@@ -10,12 +10,36 @@ async function recordPayment(client, params) {
     const nextNumRes = await client.query(`SELECT app.next_doc_number($1) AS num`, [seq]);
     const paymentNumber = nextNumRes.rows[0].num;
     const direction = params.paymentType === 'supplier_payment' ? 'out' : 'in';
+    let cashAccountId = params.cashAccountId;
+    if (!cashAccountId) {
+        const cashRes = await client.query("SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cashbox') DESC LIMIT 1");
+        cashAccountId = cashRes.rows[0]?.id;
+        if (!cashAccountId)
+            throw new Error('لا توجد خزينة نشطة لتسجيل حركة النقدية');
+    }
+    // 1. Insert payment in draft state first to get paymentId UUID
+    const payRes = await client.query(`INSERT INTO app.payments (
+      payment_no, direction, party_id, cash_account_id, payment_date,
+      amount, method, status, notes
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8)
+    RETURNING id`, [
+        paymentNumber,
+        direction,
+        params.partyId || null,
+        cashAccountId,
+        params.paymentDate,
+        params.amount,
+        params.paymentMethod,
+        params.notes || null,
+    ]);
+    const paymentId = payRes.rows[0].id;
+    // 2. Post Journal Entry with UUID sourceDocId
     let journalId;
     if (params.paymentType === 'customer_receipt') {
         journalId = await (0, accounting_js_1.postJournalEntry)(client, {
             entryDate: params.paymentDate,
             sourceDocType: 'payment',
-            sourceDocId: paymentNumber,
+            sourceDocId: paymentId,
             narration: `سند قبض ${paymentNumber} من عميل`,
             lines: [
                 {
@@ -38,7 +62,7 @@ async function recordPayment(client, params) {
         journalId = await (0, accounting_js_1.postJournalEntry)(client, {
             entryDate: params.paymentDate,
             sourceDocType: 'payment',
-            sourceDocId: paymentNumber,
+            sourceDocId: paymentId,
             narration: `سند صرف ${paymentNumber} لمورد`,
             lines: [
                 {
@@ -61,7 +85,7 @@ async function recordPayment(client, params) {
         journalId = await (0, accounting_js_1.postJournalEntry)(client, {
             entryDate: params.paymentDate,
             sourceDocType: 'payment',
-            sourceDocId: paymentNumber,
+            sourceDocId: paymentId,
             narration: `تحصيل سائق (${params.driverName || ''}) سند ${paymentNumber}`,
             lines: [
                 {
@@ -80,21 +104,7 @@ async function recordPayment(client, params) {
             ],
         });
     }
-    const payRes = await client.query(`INSERT INTO app.payments (
-      payment_no, direction, party_id, payment_date,
-      amount, method, status, journal_entry_id, notes
-    ) VALUES ($1, $2, $3, $4, $5, $6, 'approved', $7, $8)
-    RETURNING id`, [
-        paymentNumber,
-        direction,
-        params.partyId || null,
-        params.paymentDate,
-        params.amount,
-        params.paymentMethod,
-        journalId,
-        params.notes || null,
-    ]);
-    const paymentId = payRes.rows[0].id;
+    // 3. Insert allocations if any
     if (params.allocations && params.allocations.length > 0) {
         for (const alloc of params.allocations) {
             if (direction === 'in') {
@@ -109,6 +119,8 @@ async function recordPayment(client, params) {
             }
         }
     }
+    // 4. Update payment to approved and link journal entry
+    await client.query("UPDATE app.payments SET status = 'approved', journal_entry_id = $1, approved_at = now() WHERE id = $2", [journalId, paymentId]);
     return paymentId;
 }
 async function performPartyNetting(client, partyId, amount, notes) {

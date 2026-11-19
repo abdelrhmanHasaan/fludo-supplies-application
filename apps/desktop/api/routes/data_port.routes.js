@@ -28,7 +28,7 @@ const dataPortRoutes = async (fastify) => {
             message: `تم استيراد ${result.customersCreated} عميل، ${result.suppliersCreated} مورد، ${result.productsCreated} صنف بنجاح!`,
         };
     });
-    // 3. Export Customers to Excel
+    // 3. Template Download
     fastify.get('/template/excel', async (req, reply) => {
         const buffer = await (0, exporter_js_1.generateImportTemplateExcel)();
         reply
@@ -36,7 +36,23 @@ const dataPortRoutes = async (fastify) => {
             .header('Content-Disposition', 'attachment; filename="fludo_import_template.xlsx"')
             .send(buffer);
     });
-    // 3. Export Customers to Excel
+    // 4. Export Yomia Full 10-Sheet Workbook (Template-Fill Matching يوميه.xlsx)
+    fastify.get('/export/yomia', async (req, reply) => {
+        const { fix_formulas } = req.query;
+        const shouldFix = fix_formulas !== 'false';
+        const client = await db_js_1.pool.connect();
+        try {
+            const buffer = await (0, exporter_js_1.exportYomiaWorkbook)(client, shouldFix);
+            reply
+                .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                .header('Content-Disposition', `attachment; filename="yomia_Fludo_ERP.xlsx"; filename*=UTF-8''${encodeURIComponent('يوميه_Fludo_ERP.xlsx')}`)
+                .send(buffer);
+        }
+        finally {
+            client.release();
+        }
+    });
+    // 5. Export Customers to Excel
     fastify.get('/export/customers', async (req, reply) => {
         const client = await db_js_1.pool.connect();
         try {
@@ -50,7 +66,7 @@ const dataPortRoutes = async (fastify) => {
             client.release();
         }
     });
-    // 4. Export Products to Excel
+    // 6. Export Products to Excel
     fastify.get('/export/products', async (req, reply) => {
         const client = await db_js_1.pool.connect();
         try {
@@ -64,7 +80,7 @@ const dataPortRoutes = async (fastify) => {
             client.release();
         }
     });
-    // 5. Export Customer Statement to Excel
+    // 7. Export Customer Statement to Excel
     fastify.get('/export/statement/:partyId', async (req, reply) => {
         const { partyId } = req.params;
         const { start_date, end_date } = req.query;
@@ -80,25 +96,42 @@ const dataPortRoutes = async (fastify) => {
             client.release();
         }
     });
-    // 6. Export SQL Dump
+    // 8. Export Portable Data SQL
     fastify.get('/export/sql', async (req, reply) => {
         const client = await db_js_1.pool.connect();
         try {
             const sql = await (0, exporter_js_1.exportDatabaseToSql)(client);
             reply
                 .header('Content-Type', 'application/sql')
-                .header('Content-Disposition', 'attachment; filename="fludo_erp_export.sql"')
+                .header('Content-Disposition', 'attachment; filename="fludo_erp_data.sql"')
                 .send(sql);
         }
         finally {
             client.release();
         }
     });
-    // 7. Import SQL Script
+    // 9. Export Full PostgreSQL Backup via pg_dump
+    fastify.get('/export/sql/full-backup', async (req, reply) => {
+        try {
+            const sqlDump = await (0, exporter_js_1.exportFullSqlBackup)();
+            reply
+                .header('Content-Type', 'application/sql')
+                .header('Content-Disposition', 'attachment; filename="fludo_erp_full_backup.sql"')
+                .send(sqlDump);
+        }
+        catch (err) {
+            reply.status(500).send({ error: err.message || 'فشل إنشاء النسخة الاحتياطية الكاملة' });
+        }
+    });
+    // 10. Import / Restore SQL Script
     fastify.post('/import/sql', async (req, reply) => {
         const { sqlScript } = req.body;
         if (!sqlScript || !sqlScript.trim()) {
             return reply.status(400).send({ error: 'يرجى تقديم نص كود SQL' });
+        }
+        // Safety checks against dangerous drops
+        if (sqlScript.toLowerCase().includes('drop database') || sqlScript.toLowerCase().includes('drop schema public')) {
+            return reply.status(403).send({ error: 'محظور: لا يمكن تنفيذ أوامر حذف قاعدة البيانات الأساسية' });
         }
         await (0, db_js_1.withTransaction)(async (client) => {
             await client.query(sqlScript);

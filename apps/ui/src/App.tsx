@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api, getStoredToken, setStoredToken, clearStoredToken } from './api/client';
 import { CompanyProvider, useCompany } from './context/CompanyContext';
 import { Sidebar, SectionKey } from './components/Sidebar';
 import { Navbar } from './components/Navbar';
 import { ManagerPinModal } from './components/ManagerPinModal';
 import { FirstRunWizard } from './components/FirstRunWizard';
+import { GlobalSearchModal } from './components/GlobalSearchModal';
+import { Lock, ArrowRight, ShieldAlert } from 'lucide-react';
 
 // Pages
 import { DashboardPage } from './pages/DashboardPage';
@@ -23,36 +25,53 @@ import { ReportsPage } from './pages/ReportsPage';
 import { DataPortPage } from './pages/DataPortPage';
 import { SettingsPage } from './pages/SettingsPage';
 
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+
 const MainApp: React.FC = () => {
   const { company, logoLetter } = useCompany();
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [user, setUser] = useState<any | null>(null);
   const [currentSection, setCurrentSection] = useState<SectionKey>('dashboard');
   const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [checkingSetup, setCheckingSetup] = useState(true);
 
-  // Login form state
-  const [loginUser, setLoginUser] = useState('admin');
-  const [loginPass, setLoginPass] = useState('admin123456');
+  // Login form state (strictly clean without any default credentials)
+  const [loginUser, setLoginUser] = useState('');
+  const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
 
+  // Lock screen state
+  const [isLocked, setIsLocked] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [unlockLoading, setUnlockLoading] = useState(false);
+
+  // 1. Initial Setup Status Check
+  useEffect(() => {
+    async function checkStatus() {
+      try {
+        const res = await api.getAuthStatus();
+        if (!res.initialized) {
+          setShowSetupWizard(true);
+        }
+      } catch (err) {
+        console.warn('Could not check setup status:', err);
+      } finally {
+        setCheckingSetup(false);
+      }
+    }
+    checkStatus();
+  }, []);
+
+  // 2. Load current user if token exists
   useEffect(() => {
     if (token) {
       loadCurrentUser();
     }
   }, [token]);
-
-  // Keyboard shortcut: F2 for Daily Transaction Center
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F2') {
-        e.preventDefault();
-        setCurrentSection('daily');
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   const loadCurrentUser = async () => {
     try {
@@ -63,19 +82,78 @@ const MainApp: React.FC = () => {
     }
   };
 
+  // 3. Global Shortcuts: F2 for Daily, Ctrl+K for Search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        setCurrentSection('daily');
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setSearchModalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // 4. Idle Inactivity Lock (15 Minutes)
+  const lastActivityRef = useRef<number>(Date.now());
+  useEffect(() => {
+    if (!token || isLocked) return;
+
+    const updateActivity = () => {
+      lastActivityRef.current = Date.now();
+    };
+
+    const interval = setInterval(() => {
+      if (Date.now() - lastActivityRef.current > IDLE_TIMEOUT_MS) {
+        setIsLocked(true);
+      }
+    }, 30000); // Check every 30s
+
+    window.addEventListener('mousemove', updateActivity);
+    window.addEventListener('keydown', updateActivity);
+    window.addEventListener('click', updateActivity);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('mousemove', updateActivity);
+      window.removeEventListener('keydown', updateActivity);
+      window.removeEventListener('click', updateActivity);
+    };
+  }, [token, isLocked]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginLoading(true);
     setLoginError(null);
     try {
-      const res = await api.login({ username: loginUser, password: loginPass });
+      const res = await api.login({ username: loginUser.trim(), password: loginPass });
       setStoredToken(res.token);
       setToken(res.token);
       setUser(res.user);
+      setIsLocked(false);
     } catch (err: any) {
-      setLoginError(err.message || 'فشل تسجيل الدخول');
+      setLoginError(err.message || 'اسم المستخدم أو كلمة المرور غير صحيحة');
     } finally {
       setLoginLoading(false);
+    }
+  };
+
+  const handleUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUnlockLoading(true);
+    setUnlockError(null);
+    try {
+      await api.login({ username: user.username, password: unlockPassword });
+      setIsLocked(false);
+      setUnlockPassword('');
+      lastActivityRef.current = Date.now();
+    } catch (err: any) {
+      setUnlockError(err.message || 'كلمة المرور غير صحيحة');
+    } finally {
+      setUnlockLoading(false);
     }
   };
 
@@ -83,13 +161,29 @@ const MainApp: React.FC = () => {
     clearStoredToken();
     setToken(null);
     setUser(null);
+    setIsLocked(false);
   };
 
-  // If not logged in, render the clean login screen
+  const handleSetupSuccess = (newToken: string, newUser: any) => {
+    setShowSetupWizard(false);
+    setToken(newToken);
+    setUser(newUser);
+  };
+
+  // If first-run setup wizard is active
+  if (showSetupWizard) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <FirstRunWizard isOpen={true} onSuccess={handleSetupSuccess} />
+      </div>
+    );
+  }
+
+  // If not logged in, render clean login screen
   if (!token) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-150">
           <div className="bg-gradient-to-r from-blue-900 to-indigo-950 p-8 text-center text-white space-y-2">
             <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center text-white font-black text-2xl mx-auto shadow-lg shadow-blue-500/30">
               {logoLetter}
@@ -113,6 +207,7 @@ const MainApp: React.FC = () => {
                 type="text"
                 value={loginUser}
                 onChange={(e) => setLoginUser(e.target.value)}
+                placeholder="أدخل اسم المستخدم"
                 className="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 required
               />
@@ -124,10 +219,10 @@ const MainApp: React.FC = () => {
                 type="password"
                 value={loginPass}
                 onChange={(e) => setLoginPass(e.target.value)}
+                placeholder="أدخل كلمة المرور"
                 className="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                 required
               />
-              <span className="block text-[11px] text-slate-400 mt-1">الحساب الافتراضي: admin / admin123456</span>
             </div>
 
             <button
@@ -191,6 +286,7 @@ const MainApp: React.FC = () => {
         <Navbar
           currentSectionTitle={getSectionTitle()}
           onOpenPinModal={() => setPinModalOpen(true)}
+          onOpenSearch={() => setSearchModalOpen(true)}
           onRefresh={() => window.location.reload()}
           user={user}
         />
@@ -215,11 +311,70 @@ const MainApp: React.FC = () => {
         </main>
       </div>
 
+      {/* Global Search Modal (Ctrl+K) */}
+      <GlobalSearchModal
+        isOpen={searchModalOpen}
+        onClose={() => setSearchModalOpen(false)}
+        onNavigate={setCurrentSection}
+      />
+
       {/* Manager PIN Modal */}
       <ManagerPinModal isOpen={pinModalOpen} onClose={() => setPinModalOpen(false)} />
 
-      {/* First-Run Setup Wizard */}
-      <FirstRunWizard />
+      {/* 15-Minute Idle Lock Screen Overlay */}
+      {isLocked && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-sm w-full p-8 text-center space-y-5">
+            <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto shadow-md">
+              <Lock className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-slate-800">قفل الشاشة لتوقف النشاط</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                تم قفل النظام تلقائياً بعد 15 دقيقة خمول لحماية البيانات. مسوداتك محفوظة بأمان.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-center gap-2">
+              <div className="w-6 h-6 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center">
+                {user?.username ? user.username.charAt(0).toUpperCase() : 'U'}
+              </div>
+              <span className="text-xs font-bold text-slate-700">{user?.fullName || user?.username}</span>
+            </div>
+
+            <form onSubmit={handleUnlock} className="space-y-4">
+              {unlockError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold">
+                  {unlockError}
+                </div>
+              )}
+              <input
+                type="password"
+                required
+                autoFocus
+                value={unlockPassword}
+                onChange={(e) => setUnlockPassword(e.target.value)}
+                placeholder="أدخل كلمة المرور لإلغاء القفل"
+                className="w-full border border-slate-300 rounded-xl p-2.5 text-xs text-center font-bold focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+              <button
+                type="submit"
+                disabled={unlockLoading}
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition-all disabled:opacity-50"
+              >
+                {unlockLoading ? 'جاري التحقق...' : 'إلغاء القفل والمتابعة'}
+              </button>
+            </form>
+
+            <button
+              onClick={handleLogout}
+              className="text-[11px] text-slate-400 hover:text-rose-600 font-bold transition-colors"
+            >
+              تسجيل الخروج والانتقال لحساب آخر
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

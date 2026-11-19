@@ -29,6 +29,7 @@ export const DataPortPage: React.FC = () => {
   const [sqlLoading, setSqlLoading] = useState(false);
   const [sqlResult, setSqlResult] = useState<string | null>(null);
   const [downloadLoading, setDownloadLoading] = useState<string | null>(null);
+  const [fixFormulas, setFixFormulas] = useState(true);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -231,8 +232,54 @@ export const DataPortPage: React.FC = () => {
           </div>
 
           {/* Export Operations */}
-          <div className="space-y-2">
-            <span className="text-xs font-black text-slate-700 block">تصدير بيانات النظام الحالية إلى ملف إكسيل:</span>
+          <div className="space-y-3">
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-5 h-5 text-blue-700" />
+                  <span className="text-xs font-black text-blue-900">
+                    تصدير شيت اليومية الكامل (مطابق لملف يوميه.xlsx — 10 شيتات)
+                  </span>
+                </div>
+                <span className="text-[10px] bg-blue-200/70 text-blue-900 font-bold px-2 py-0.5 rounded">
+                  10 Worksheets
+                </span>
+              </div>
+              <p className="text-[11px] text-blue-700/90 leading-relaxed">
+                يولّد ملفاً مطابقاً 100% للشيت الأصلي (الرئيسية، الإعدادات، الفاتورة، إذن استلام، كشف الحساب بحد أحمر، حسابات العملاء 20 سطر، الموردين 44 سطر، الموظفين، والمعدات) مع الحفاظ التام على المعادلات الأصلية.
+              </p>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-1">
+                <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer font-bold">
+                  <input
+                    type="checkbox"
+                    checked={fixFormulas}
+                    onChange={(e) => setFixFormulas(e.target.checked)}
+                    className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+                  />
+                  <span>تصحيح أخطاء المعادلات القديمة تلقائياً</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleExportDownload(
+                      `export/yomia?fix_formulas=${fixFormulas}`,
+                      'يوميه_Fludo_ERP.xlsx'
+                    )
+                  }
+                  disabled={downloadLoading !== null}
+                  className="w-full sm:w-auto px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>
+                    {downloadLoading?.includes('export/yomia')
+                      ? 'جاري توليد الشيت...'
+                      : 'تحميل ملف اليومية الكامل (.xlsx)'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <span className="text-xs font-black text-slate-700 block">تصديرات إضافية:</span>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 type="button"
@@ -430,18 +477,38 @@ export const DataPortPage: React.FC = () => {
 
           {/* Backup SQL Export */}
           <div className="space-y-3">
-            <span className="text-xs font-black text-slate-700 block">تصدير نسخة احتياطية كاملة بصيغة SQL:</span>
-            <button
-              type="button"
-              onClick={() => handleExportDownload('export/sql', 'fludo_erp_export.sql')}
-              disabled={downloadLoading !== null}
-              className="w-full inline-flex items-center justify-center gap-2.5 px-4 py-3 bg-blue-50 text-blue-800 border border-blue-300/80 rounded-xl text-xs font-bold hover:bg-blue-100 transition-colors shadow-sm disabled:opacity-50"
-            >
-              <Download className="w-4 h-4 text-blue-600" />
-              <span>{downloadLoading === 'export/sql' ? 'جاري استخراج وتجميع النسخة...' : 'تحميل ملف النسخة الاحتياطية (fludo_erp_export.sql)'}</span>
-            </button>
+            <span className="text-xs font-black text-slate-700 block">خيارات تصدير قواعد البيانات (SQL):</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => handleExportDownload('export/sql/full-backup', 'fludo_erp_full_backup.sql')}
+                disabled={downloadLoading !== null}
+                className="inline-flex items-center justify-center gap-2 px-3 py-3 bg-indigo-50 text-indigo-900 border border-indigo-300 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-colors shadow-sm disabled:opacity-50"
+              >
+                <Database className="w-4 h-4 text-indigo-600" />
+                <span>
+                  {downloadLoading === 'export/sql/full-backup'
+                    ? 'جاري عمل pg_dump...'
+                    : 'نسخة كاملة (PostgreSQL pg_dump)'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExportDownload('export/sql', 'fludo_erp_data.sql')}
+                disabled={downloadLoading !== null}
+                className="inline-flex items-center justify-center gap-2 px-3 py-3 bg-blue-50 text-blue-900 border border-blue-300 rounded-xl text-xs font-bold hover:bg-blue-100 transition-colors shadow-sm disabled:opacity-50"
+              >
+                <Download className="w-4 h-4 text-blue-600" />
+                <span>
+                  {downloadLoading === 'export/sql'
+                    ? 'جاري التصدير...'
+                    : 'ملف البيانات المحمولة (INSERT INTO)'}
+                </span>
+              </button>
+            </div>
             <p className="text-[11px] text-slate-400">
-              يحتوي الملف على أوامر SQL قياسية متوافقة 100% مع PostgreSQL يمكن استعادتها بأمان تام.
+              النسخة الكاملة تستخدم pg_dump القياسي مع SHA-256 Checksum، بينما ملف البيانات المحمولة يحوي أوامر INSERT بترتيب الـ Foreign Keys.
             </p>
           </div>
 

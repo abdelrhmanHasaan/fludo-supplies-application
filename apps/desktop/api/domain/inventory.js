@@ -5,9 +5,9 @@ exports.getProductStockOverview = getProductStockOverview;
 async function recordStockMovement(client, movement) {
     let branchId = movement.branchId;
     if (!branchId) {
-        const bRes = await client.query('SELECT id FROM app.branches ORDER BY created_at LIMIT 1');
+        const bRes = await client.query("SELECT id FROM app.branches WHERE code = 'MAIN' OR is_active = true LIMIT 1");
         if (bRes.rows.length === 0) {
-            const newB = await client.query("INSERT INTO app.branches (code, name_ar, is_active) VALUES ('MAIN', 'المقر الرئيسي', true) RETURNING id");
+            const newB = await client.query("INSERT INTO app.branches (code, name, is_active) VALUES ('MAIN', 'المقر الرئيسي', true) RETURNING id");
             branchId = newB.rows[0].id;
         }
         else {

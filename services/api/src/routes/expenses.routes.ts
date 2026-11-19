@@ -44,21 +44,42 @@ export const expensesRoutes: FastifyPluginAsync = async (fastify) => {
 
   // Record Expense
   fastify.post('/', async (req, reply) => {
-    const { categoryId, expenseDate, amount, paymentMethod, payee, description } = req.body as any;
-    if (!amount || amount <= 0) return reply.status(400).send({ error: 'المبلغ مطلوب' });
+    const { categoryId, expenseDate, amount, paymentMethod, payee, description, cashAccountId } = req.body as any;
+    if (!amount || amount <= 0) return reply.status(400).send({ error: 'المبلغ مطلوب ويجب أن يكون أكبر من الصفر' });
 
     const expenseId = await withTransaction(async (client) => {
+      // 1. Ensure category
+      let finalCatId = categoryId;
+      if (!finalCatId) {
+        const catRes = await client.query('SELECT id FROM app.expense_categories WHERE is_deleted = false LIMIT 1');
+        finalCatId = catRes.rows[0]?.id;
+      }
+
+      // 2. Ensure cash account
+      let finalCashAccId = cashAccountId;
+      if (!finalCashAccId) {
+        const cashRes = await client.query("SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cashbox') DESC LIMIT 1");
+        finalCashAccId = cashRes.rows[0]?.id;
+      }
+      if (!finalCashAccId) throw new Error('لا توجد خزينة نشطة لصرف المصروف منها');
+
+      // 3. Ensure branch
+      const branchRes = await client.query("SELECT id FROM app.branches WHERE code = 'MAIN' OR is_active = true LIMIT 1");
+      const branchId = branchRes.rows[0]?.id || null;
+
       const nextNumRes = await client.query("SELECT app.next_doc_number('expense') AS num");
       const expenseNumber = nextNumRes.rows[0].num;
 
       const res = await client.query(
         `INSERT INTO app.expenses (
-          expense_number, category_id, expense_date, amount, payment_method, payee, description, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'approved')
+          expense_no, category_id, branch_id, cash_account_id, expense_date, amount, method, payee, notes, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'draft')
         RETURNING id`,
         [
           expenseNumber,
-          categoryId || null,
+          finalCatId,
+          branchId,
+          finalCashAccId,
           expenseDate || new Date().toISOString().split('T')[0],
           amount,
           paymentMethod || 'cash',
@@ -90,7 +111,10 @@ export const expensesRoutes: FastifyPluginAsync = async (fastify) => {
         ],
       });
 
-      await client.query('UPDATE app.expenses SET journal_entry_id = $1 WHERE id = $2', [journalId, id]);
+      await client.query(
+        "UPDATE app.expenses SET status = 'approved', journal_entry_id = $1, approved_at = now() WHERE id = $2",
+        [journalId, id]
+      );
       return id;
     });
 

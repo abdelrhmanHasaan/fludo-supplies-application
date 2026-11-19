@@ -46,8 +46,18 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
 
 export const api = {
   // Auth
+  getAuthStatus: () => apiFetch<{ initialized: boolean; userCount: number }>('/auth/status'),
+  setupAdmin: (data: any) => apiFetch<{ message: string; token: string; user: any }>('/auth/setup', { method: 'POST', body: JSON.stringify(data) }),
   login: (credentials: any) => apiFetch<{ token: string; user: any }>('/auth/login', { method: 'POST', body: JSON.stringify(credentials) }),
   me: () => apiFetch<{ user: any }>('/auth/me'),
+
+  // Global Search
+  search: (q: string, types?: string) => {
+    const params = new URLSearchParams();
+    params.set('q', q);
+    if (types) params.set('types', types);
+    return apiFetch<{ results: any[]; total: number; query: string }>(`/search?${params.toString()}`);
+  },
 
   // Parties
   getParties: (params?: { is_customer?: boolean; is_supplier?: boolean; search?: string }) => {

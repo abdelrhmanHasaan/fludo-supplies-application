@@ -87,13 +87,13 @@ export const partiesRoutes: FastifyPluginAsync = async (fastify) => {
       SELECT 
         e.id AS journal_entry_id,
         TO_CHAR(e.entry_date, 'YYYY-MM-DD') AS entry_date,
-        e.entry_number,
-        e.source_doc_type,
+        e.entry_no AS entry_number,
+        e.source_type AS source_doc_type,
         l.description,
         l.debit,
         l.credit
       FROM app.journal_lines l
-      JOIN app.journal_entries e ON e.id = l.journal_entry_id
+      JOIN app.journal_entries e ON e.id = l.entry_id
       JOIN app.accounts a ON a.id = l.account_id
       WHERE l.party_id = $1 AND (a.system_role = 'receivable' OR a.system_role = 'payable')
     `;

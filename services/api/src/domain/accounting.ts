@@ -56,7 +56,7 @@ export async function postJournalEntry(client: PoolClient, params: PostJournalPa
   const entryRes = await client.query(
     `INSERT INTO app.journal_entries (
       entry_no, entry_date, source_type, source_id, description, status
-    ) VALUES ($1, $2, $3, $4, $5, 'posted')
+    ) VALUES ($1, $2, $3, $4, $5, 'draft')
     RETURNING id`,
     [entryNumber, params.entryDate, params.sourceDocType, params.sourceDocId, params.narration]
   );
@@ -80,6 +80,12 @@ export async function postJournalEntry(client: PoolClient, params: PostJournalPa
       ]
     );
   }
+
+  // Trigger trg_a_je_guard verifies assert_entry_balanced and transitions to posted
+  await client.query(
+    `UPDATE app.journal_entries SET status = 'posted' WHERE id = $1`,
+    [entryId]
+  );
 
   return entryId;
 }

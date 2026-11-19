@@ -21,6 +21,7 @@ import { approvalsRoutes } from './routes/approvals.routes.js';
 import { auditRoutes } from './routes/audit.routes.js';
 import { dataPortRoutes } from './routes/data_port.routes.js';
 import { companyRoutes } from './routes/company.routes.js';
+import { searchRoutes } from './routes/search.routes.js';
 
 dotenv.config();
 
@@ -30,64 +31,58 @@ const fastify = Fastify({
 
 async function autoEnsureSchema() {
   try {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+
     const res = await pool.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 
         WHERE table_schema = 'app' AND table_name = 'users'
       ) AS exists;
     `);
+
     if (!res.rows[0]?.exists) {
       console.log('[API] Fresh database detected. Applying 0001_initial.sql migration automatically...');
-      const fs = await import('node:fs');
-      const path = await import('node:path');
-      const migrationPaths = [
+      const migration1Paths = [
         path.join(__dirname, '0001_initial.sql'),
         path.join(__dirname, '..', '0001_initial.sql'),
         path.resolve(process.cwd(), 'db/migrations/0001_initial.sql'),
         path.resolve(process.cwd(), '../../db/migrations/0001_initial.sql'),
         path.join(process.cwd(), '0001_initial.sql'),
       ];
-      const sqlPath = migrationPaths.find((p) => fs.existsSync(p));
-      if (sqlPath) {
-        const sql = fs.readFileSync(sqlPath, 'utf8');
+      const sql1Path = migration1Paths.find((p) => fs.existsSync(p));
+      if (sql1Path) {
+        const sql = fs.readFileSync(sql1Path, 'utf8');
         await pool.query(sql);
         console.log('[API] Initial schema migrated successfully!');
       }
     }
-  } catch (err) {
-    console.warn('[API] autoEnsureSchema check notice:', err);
-  }
-}
 
-async function autoSeedAdmin() {
-  try {
-    const existing = await pool.query("SELECT id FROM app.users WHERE username = 'admin'");
-    if (existing.rows.length === 0) {
-      const passwordHash = await hashSecret('admin123456');
-      const pinHash = await hashSecret('1234');
+    // Check Migration 0002
+    const m2Check = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_proc WHERE proname = 'normalize_ar'
+      ) AS exists;
+    `).catch(() => ({ rows: [{ exists: false }] }));
 
-      const roleRes = await pool.query("SELECT id FROM app.roles WHERE code = 'admin'");
-      const roleId = roleRes.rows[0]?.id;
-
-      const userRes = await pool.query(
-        `INSERT INTO app.users (
-          username, full_name, password_hash, manager_pin_hash, is_active
-        ) VALUES ('admin', 'مدير النظام', $1, $2, true)
-        RETURNING id`,
-        [passwordHash, pinHash]
-      );
-
-      const userId = userRes.rows[0].id;
-      if (roleId) {
-        await pool.query(
-          `INSERT INTO app.user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [userId, roleId]
-        );
+    if (!m2Check.rows[0]?.exists) {
+      console.log('[API] Applying 0002_fix_constraints_and_search.sql migration...');
+      const migration2Paths = [
+        path.join(__dirname, '0002_fix_constraints_and_search.sql'),
+        path.join(__dirname, '..', '0002_fix_constraints_and_search.sql'),
+        path.resolve(process.cwd(), 'db/migrations/0002_fix_constraints_and_search.sql'),
+        path.resolve(process.cwd(), '../../db/migrations/0002_fix_constraints_and_search.sql'),
+        path.join(process.cwd(), '0002_fix_constraints_and_search.sql'),
+      ];
+      const sql2Path = migration2Paths.find((p) => fs.existsSync(p));
+      if (sql2Path) {
+        const sql = fs.readFileSync(sql2Path, 'utf8');
+        await pool.query(sql);
+        console.log('[API] 0002 migration applied successfully!');
       }
-      console.log('Default admin seeded (admin / admin123456, PIN: 1234)');
     }
   } catch (err) {
-    console.error('Auto seed admin error:', err);
+    console.warn('[API] autoEnsureSchema check notice:', err);
   }
 }
 
@@ -103,9 +98,61 @@ async function start() {
     },
   });
 
-  fastify.get('/api/health', async () => {
-    return { status: 'healthy', version: '1.0.0', time: new Date().toISOString() };
+  // Centralized Error Handler (translating PostgreSQL errors to clear Arabic messages)
+  fastify.setErrorHandler((error: any, request, reply) => {
+    const correlationId = `err_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    console.error(`[API ERROR ${correlationId}]`, {
+      url: request.url,
+      method: request.method,
+      code: error.code,
+      detail: error.detail,
+      constraint: error.constraint,
+      column: error.column,
+      table: error.table,
+      message: error.message,
+    });
+
+    let arabicMessage = error.message || 'حدث خطأ غير متوقع';
+    let statusCode = error.statusCode || 500;
+
+    if (error.code === '23502') {
+      statusCode = 400;
+      arabicMessage = `الحقل [${error.column || 'المطلوب'}] لا يمكن تركه فارغاً`;
+    } else if (error.code === '23503') {
+      statusCode = 400;
+      arabicMessage = 'البيانات المرتبطة غير صحيحة أو غير موجودة (يرجى التأكد من اختيار العميل أو الصنف أو الخزينة بشكل صحيح)';
+    } else if (error.code === '23505') {
+      statusCode = 400;
+      arabicMessage = 'الرقم أو الكود مسجل بالفعل في النظام ولا يمكن تكراره';
+    } else if (error.code === '23514') {
+      statusCode = 400;
+      arabicMessage = 'القيمة المدخلة غير مسموحة (يرجى التحقق من صحة الكميات والأسعار والمبالغ)';
+    } else if (error.code === '42501') {
+      statusCode = 403;
+      arabicMessage = 'السجل معتمد ومقفل — يلزم إذن وموافقة المدير (PIN) لإجراء التعديل';
+    } else if (error.code === 'P0001') {
+      statusCode = 400;
+      arabicMessage = error.message;
+    } else if (error.code === '42P01' || error.code === '42703') {
+      statusCode = 500;
+      arabicMessage = 'قاعدة البيانات بحاجة إلى تحديث هيكلي';
+    }
+
+    reply.status(statusCode).send({
+      error: arabicMessage,
+      correlationId,
+      code: error.code,
+      detail: process.env.NODE_ENV !== 'production' ? error.detail : undefined,
+    });
   });
+
+  const healthHandler = async () => ({
+    status: 'healthy',
+    version: '1.0.0',
+    time: new Date().toISOString(),
+  });
+  fastify.get('/health', healthHandler);
+  fastify.get('/api/health', healthHandler);
 
   await fastify.register(authRoutes, { prefix: '/api/auth' });
   await fastify.register(partiesRoutes, { prefix: '/api/parties' });
@@ -123,9 +170,9 @@ async function start() {
   await fastify.register(auditRoutes, { prefix: '/api/audit' });
   await fastify.register(dataPortRoutes, { prefix: '/api/data' });
   await fastify.register(companyRoutes, { prefix: '/api/company' });
+  await fastify.register(searchRoutes, { prefix: '/api/search' });
 
   await autoEnsureSchema();
-  await autoSeedAdmin();
 
   const port = parseInt(process.env.PORT || '4000', 10);
   const host = '127.0.0.1';

@@ -28,7 +28,9 @@ Thumbs.db
 # Temporary test exports and screenshots
 test_*.xlsx
 test_*.sql
+output/
 tests/screenshots_deep/
+*.xlsx
 
 # Installer executable (tracked separately or via GitHub Releases to prevent repo bloat)
 installer/*.exe

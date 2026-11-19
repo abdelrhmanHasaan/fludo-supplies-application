@@ -1,37 +1,112 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { pool } from '../config/db.js';
+import { pool, withTransaction } from '../config/db.js';
 import { hashSecret, verifySecret, signToken, verifyToken } from '../utils/security.js';
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
-  // Ensure default admin user exists
-  fastify.post('/seed-admin', async (req, reply) => {
-    const existing = await pool.query("SELECT id FROM app.users WHERE username = 'admin'");
-    if (existing.rows.length === 0) {
-      const passwordHash = await hashSecret('admin123456');
-      const pinHash = await hashSecret('1234');
+  // Check system setup status (does any active user exist?)
+  fastify.get('/status', async () => {
+    const res = await pool.query(
+      `SELECT count(*)::int AS count FROM app.users WHERE NOT is_deleted`
+    );
+    const count = res.rows[0]?.count || 0;
+    return {
+      initialized: count > 0,
+      userCount: count,
+    };
+  });
 
-      const roleRes = await pool.query("SELECT id FROM app.roles WHERE code = 'admin'");
-      const roleId = roleRes.rows[0]?.id;
+  // First-run setup wizard: create initial admin & company profile
+  fastify.post('/setup', async (req, reply) => {
+    const { companyName, adminFullName, username, password, managerPin } = req.body as any;
 
-      const userRes = await pool.query(
-        `INSERT INTO app.users (
-          username, full_name, password_hash, manager_pin_hash, is_active
-        ) VALUES ('admin', 'مدير النظام', $1, $2, true)
-        RETURNING id`,
-        [passwordHash, pinHash]
+    // Check if system is already initialized
+    const checkUsers = await pool.query(
+      `SELECT count(*)::int AS count FROM app.users WHERE NOT is_deleted`
+    );
+    if (checkUsers.rows[0]?.count > 0) {
+      return reply.status(403).send({ error: 'تم تهيئة النظام مسبقاً، يرجى تسجيل الدخول' });
+    }
+
+    if (!companyName || !companyName.trim()) {
+      return reply.status(400).send({ error: 'اسم الشركة مطلوب' });
+    }
+    if (!adminFullName || !adminFullName.trim()) {
+      return reply.status(400).send({ error: 'الاسم الكامل لمدير النظام مطلوب' });
+    }
+    if (!username || username.trim().length < 3) {
+      return reply.status(400).send({ error: 'اسم المستخدم يجب ألا يقل عن 3 أحرف' });
+    }
+    if (!password || password.length < 12) {
+      return reply.status(400).send({ error: 'كلمة المرور يجب ألا تقل عن 12 حرفاً وفقاً لمعايير الأمان' });
+    }
+    if (!managerPin || !/^\d{4}$/.test(managerPin.toString().trim())) {
+      return reply.status(400).send({ error: 'رمز موافقة المدير (PIN) يجب أن يتكون من 4 أرقام بالضبط' });
+    }
+
+    const cleanUsername = username.trim().toLowerCase();
+    const cleanFullName = adminFullName.trim();
+    const cleanCompanyName = companyName.trim();
+    const cleanPin = managerPin.toString().trim();
+
+    const passwordHash = await hashSecret(password);
+    const pinHash = await hashSecret(cleanPin);
+
+    const result = await withTransaction(async (client) => {
+      // 1. Update company / tenant name if tenant exists
+      await client.query(
+        `UPDATE app.tenants SET name = $1, updated_at = NOW()`,
+        [cleanCompanyName]
       );
 
-      const userId = userRes.rows[0].id;
-      if (roleId) {
-        await pool.query(
-          `INSERT INTO app.user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [userId, roleId]
+      // 2. Ensure admin role exists
+      let roleRes = await client.query(`SELECT id FROM app.roles WHERE code = 'admin'`);
+      let roleId = roleRes.rows[0]?.id;
+      if (!roleId) {
+        const newRole = await client.query(
+          `INSERT INTO app.roles (code, name_ar, description) 
+           VALUES ('admin', 'مدير النظام', 'صلاحيات كاملة على كافة أجزاء النظام') 
+           RETURNING id`
         );
+        roleId = newRole.rows[0].id;
       }
 
-      return { status: 'created', username: 'admin', defaultPass: 'admin123456', defaultPin: '1234' };
-    }
-    return { status: 'already_exists' };
+      // 3. Create administrator user
+      const userRes = await client.query(
+        `INSERT INTO app.users (
+          username, full_name, password_hash, manager_pin_hash, 
+          is_active, must_change_password, failed_attempts
+        ) VALUES ($1, $2, $3, $4, true, false, 0)
+        RETURNING id, username, full_name`,
+        [cleanUsername, cleanFullName, passwordHash, pinHash]
+      );
+      const user = userRes.rows[0];
+
+      // 4. Assign admin role
+      await client.query(
+        `INSERT INTO app.user_roles (user_id, role_id) 
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [user.id, roleId]
+      );
+
+      return user;
+    });
+
+    const token = signToken({
+      userId: result.id,
+      username: result.username,
+      role: 'admin',
+    });
+
+    return {
+      message: 'تم إعداد النظام وإنشاء حساب المدير بنجاح',
+      token,
+      user: {
+        id: result.id,
+        username: result.username,
+        fullName: result.full_name,
+        role: 'admin',
+      },
+    };
   });
 
   // Login
@@ -47,7 +122,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
        LEFT JOIN app.user_roles ur ON ur.user_id = u.id
        LEFT JOIN app.roles r ON r.id = ur.role_id
        WHERE lower(u.username) = lower($1) AND NOT u.is_deleted`,
-      [username]
+      [username.trim()]
     );
 
     if (res.rows.length === 0) {
@@ -55,14 +130,40 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const user = res.rows[0];
+
+    // Check temporary lockout
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      const waitMinutes = Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 60000);
+      return reply.status(429).send({
+        error: `الحساب مقفل مؤقتاً لتكرار محاولات الدخول الخاطئة. يرجى المحاولة بعد ${waitMinutes} دقيقة.`,
+      });
+    }
+
     if (!user.is_active) {
       return reply.status(403).send({ error: 'هذا الحساب معطل، يرجى مراجعة الإدارة' });
     }
 
     const isValid = await verifySecret(password, user.password_hash);
     if (!isValid) {
+      const newAttempts = (user.failed_attempts || 0) + 1;
+      let lockSql = `UPDATE app.users SET failed_attempts = $1 WHERE id = $2`;
+      let params: any[] = [newAttempts, user.id];
+
+      if (newAttempts >= 5) {
+        lockSql = `UPDATE app.users SET failed_attempts = $1, locked_until = NOW() + INTERVAL '15 minutes' WHERE id = $2`;
+      }
+      await pool.query(lockSql, params);
+
       return reply.status(401).send({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
     }
+
+    // Reset failed attempts on success
+    await pool.query(
+      `UPDATE app.users 
+       SET failed_attempts = 0, locked_until = NULL, last_login_at = NOW() 
+       WHERE id = $1`,
+      [user.id]
+    );
 
     const token = signToken({
       userId: user.id,
@@ -99,7 +200,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
        FROM app.users u
        LEFT JOIN app.user_roles ur ON ur.user_id = u.id
        LEFT JOIN app.roles r ON r.id = ur.role_id
-       WHERE u.id = $1`,
+       WHERE u.id = $1 AND NOT u.is_deleted`,
       [decoded.userId]
     );
 
@@ -110,4 +211,3 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     return { user: res.rows[0] };
   });
 };
-

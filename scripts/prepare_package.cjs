@@ -42,6 +42,22 @@ if (fs.existsSync(apiDist)) {
   process.exit(1);
 }
 
+// Copy assets (yomia template)
+const assetsSrc = path.join(rootDir, 'assets');
+const assetsDest = path.join(rootDir, 'apps', 'desktop', 'assets');
+if (fs.existsSync(assetsSrc)) {
+  copyDirSync(assetsSrc, assetsDest);
+  console.log('  ✓ Assets (templates) copied to:', assetsDest);
+}
+
+// Copy migrations
+const migrationsSrc = path.join(rootDir, 'db', 'migrations');
+const migrationsDest = path.join(rootDir, 'apps', 'desktop', 'db', 'migrations');
+if (fs.existsSync(migrationsSrc)) {
+  copyDirSync(migrationsSrc, migrationsDest);
+  console.log('  ✓ Database migrations copied to desktop package.');
+}
+
 const sqlMigration = path.join(rootDir, 'db', 'migrations', '0001_initial.sql');
 if (fs.existsSync(sqlMigration)) {
   fs.copyFileSync(sqlMigration, path.join(apiTarget, '0001_initial.sql'));
@@ -49,5 +65,11 @@ if (fs.existsSync(sqlMigration)) {
   console.log('  ✓ Initial SQL schema migration copied to desktop package.');
 }
 
-console.log('[PREPARE] Packaging staging completed successfully.');
+const sqlMigration2 = path.join(rootDir, 'db', 'migrations', '0002_fix_constraints_and_search.sql');
+if (fs.existsSync(sqlMigration2)) {
+  fs.copyFileSync(sqlMigration2, path.join(apiTarget, '0002_fix_constraints_and_search.sql'));
+  fs.copyFileSync(sqlMigration2, path.join(rootDir, 'apps', 'desktop', '0002_fix_constraints_and_search.sql'));
+  console.log('  ✓ 0002 SQL schema migration copied to desktop package.');
+}
 
+console.log('[PREPARE] Packaging staging completed successfully.');

@@ -1,29 +1,45 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import argon2 from 'argon2';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fludo-supplies-erp-local-secret-key-32-chars-min';
 
-export function hashSecret(secret: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const salt = crypto.randomBytes(16).toString('hex');
-    crypto.scrypt(secret, salt, 64, { N: 16384, r: 8, p: 1 }, (err, derivedKey) => {
-      if (err) return reject(err);
-      resolve(`${salt}:${derivedKey.toString('hex')}`);
-    });
+export async function hashSecret(secret: string): Promise<string> {
+  return await argon2.hash(secret, {
+    type: argon2.argon2id,
+    memoryCost: 65536, // 64 MB
+    timeCost: 3,
+    parallelism: 4,
   });
 }
 
-export function verifySecret(secret: string, combinedHash: string): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    const [salt, key] = combinedHash.split(':');
-    if (!salt || !key) return resolve(false);
+export async function verifySecret(secret: string, combinedHash: string): Promise<boolean> {
+  if (!secret || !combinedHash) return false;
 
-    crypto.scrypt(secret, salt, 64, { N: 16384, r: 8, p: 1 }, (err, derivedKey) => {
-      if (err) return reject(err);
-      const keyBuffer = Buffer.from(key, 'hex');
-      resolve(crypto.timingSafeEqual(keyBuffer, derivedKey));
+  // Support Argon2id hashes
+  if (combinedHash.startsWith('$argon2')) {
+    try {
+      return await argon2.verify(combinedHash, secret);
+    } catch {
+      return false;
+    }
+  }
+
+  // Fallback for legacy scrypt hashes (salt:hash)
+  if (combinedHash.includes(':')) {
+    return new Promise((resolve) => {
+      const [salt, key] = combinedHash.split(':');
+      if (!salt || !key) return resolve(false);
+
+      crypto.scrypt(secret, salt, 64, { N: 16384, r: 8, p: 1 }, (err, derivedKey) => {
+        if (err) return resolve(false);
+        const keyBuffer = Buffer.from(key, 'hex');
+        resolve(crypto.timingSafeEqual(keyBuffer, derivedKey));
+      });
     });
-  });
+  }
+
+  return false;
 }
 
 export function signToken(payload: { userId: string; username: string; role: string }): string {
@@ -43,4 +59,3 @@ export function computeAuditRowHash(prevHash: string | null, row: Record<string,
   const payload = `${prevHash || 'GENESIS'}|${normalized}`;
   return crypto.createHash('sha256').update(payload).digest('hex');
 }
-

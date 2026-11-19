@@ -82,9 +82,9 @@ async function ensureDatabase() {
         windowsHide: true,
       });
 
-      // Wait up to 6 seconds for DB to accept connections
-      for (let i = 0; i < 12; i++) {
-        await new Promise((r) => setTimeout(r, 500));
+      // Wait with backoff up to 60 seconds for DB to accept connections
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
         if (await checkPortOpen(5433)) {
           console.log('[DESKTOP] PostgreSQL successfully listening on port 5433.');
           break;
@@ -94,7 +94,14 @@ async function ensureDatabase() {
       console.warn('[DESKTOP] Could not auto-spawn PostgreSQL process:', err);
     }
   } else {
-    console.log('[DESKTOP] PostgreSQL binaries not bundled locally; relying on system service.');
+    console.log('[DESKTOP] Checking system PostgreSQL service on port 5433...');
+    for (let i = 0; i < 30; i++) {
+      if (await checkPortOpen(5433)) {
+        console.log('[DESKTOP] PostgreSQL service detected and accepting connections.');
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
   }
 }
 
@@ -139,9 +146,9 @@ async function ensureApiServer() {
         });
       }
 
-      // Wait up to 6 seconds for API to be ready
-      for (let i = 0; i < 12; i++) {
-        await new Promise((r) => setTimeout(r, 500));
+      // Wait up to 30 seconds for API to be ready
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
         if (await checkApiHealth(4000)) {
           console.log('[DESKTOP] Backend API is ready on port 4000.');
           break;

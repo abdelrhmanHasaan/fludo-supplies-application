@@ -1,225 +1,217 @@
 import React, { useState } from 'react';
-import { useCompany } from '../context/CompanyContext';
-import { api } from '../api/client';
-import { Building2, ShieldCheck, UserCheck, Key, CheckCircle, ArrowLeft, Sparkles } from 'lucide-react';
+import { api, setStoredToken } from '../api/client';
+import { Building2, ShieldCheck, CheckCircle, Sparkles, Lock, KeyRound, User } from 'lucide-react';
 
-export const FirstRunWizard: React.FC = () => {
-  const { company, showSetupModal, setShowSetupModal, refreshCompany } = useCompany();
+interface FirstRunWizardProps {
+  isOpen: boolean;
+  onSuccess: (token: string, user: any) => void;
+}
 
-  const [companyName, setCompanyName] = useState(company.name_ar || '');
-  const [tagline, setTagline] = useState(company.tagline || 'تجارة مواد البناء والتوريدات العامة');
-  const [address, setAddress] = useState(company.address || 'المركز الرئيسي — كرداسة');
-  const [phones, setPhones] = useState(company.phones || '');
-  const [adminFullName, setAdminFullName] = useState('مدير النظام');
-  const [adminUsername, setAdminUsername] = useState('admin');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [managerPin, setManagerPin] = useState('1234');
+export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSuccess }) => {
+  const [companyName, setCompanyName] = useState('شركة الرضا للتوريدات');
+  const [adminFullName, setAdminFullName] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [managerPin, setManagerPin] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!showSetupModal) return null;
+  if (!isOpen) return null;
+
+  // Calculate password strength
+  const getPasswordStrength = (pass: string) => {
+    if (!pass) return { score: 0, label: 'أدخل كلمة المرور', color: 'bg-slate-200' };
+    let score = 0;
+    if (pass.length >= 12) score += 1;
+    if (/[A-Z]/.test(pass) || /[a-z]/.test(pass)) score += 1;
+    if (/\d/.test(pass)) score += 1;
+    if (/[^A-Za-z0-9]/.test(pass)) score += 1;
+
+    if (pass.length < 12) {
+      return { score: 1, label: 'قصيرة جداً (أقل من 12 حرف)', color: 'bg-rose-500' };
+    }
+    if (score <= 2) return { score: 2, label: 'مقبولة', color: 'bg-amber-500' };
+    if (score === 3) return { score: 3, label: 'جيدة', color: 'bg-blue-500' };
+    return { score: 4, label: 'قوية وممتازة', color: 'bg-emerald-500' };
+  };
+
+  const strength = getPasswordStrength(password);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+
     if (!companyName.trim()) {
-      setError('يرجى كتابة اسم الشركة أو المؤسسة');
-      return;
+      return setError('يرجى كتابة اسم الشركة أو المؤسسة');
     }
-    if (managerPin.trim().length !== 4 || !/^\d{4}$/.test(managerPin.trim())) {
-      setError('رمز موافقة المدير (PIN) يجب أن يتكون من 4 أرقام بالضبط');
-      return;
+    if (!adminFullName.trim()) {
+      return setError('يرجى كتابة الاسم الكامل للمدير');
+    }
+    if (!username.trim() || username.trim().length < 3) {
+      return setError('اسم مستخدم المدير يجب ألا يقل عن 3 أحرف');
+    }
+    if (password.length < 12) {
+      return setError('كلمة المرور يجب ألا تقل عن 12 حرفاً وفقاً لمعايير الأمان');
+    }
+    if (!/^\d{4}$/.test(managerPin.trim())) {
+      return setError('رمز موافقة المدير (PIN) يجب أن يتكون من 4 أرقام بالضبط');
     }
 
     setLoading(true);
-    setError(null);
     try {
-      await api.setupCompany({
-        company_name: companyName.trim(),
-        tagline: tagline.trim(),
-        address: address.trim(),
-        phones: phones.trim(),
-        admin_full_name: adminFullName.trim(),
-        admin_username: adminUsername.trim(),
-        admin_password: adminPassword.trim() || undefined,
-        manager_pin: managerPin.trim(),
+      const res = await api.setupAdmin({
+        companyName: companyName.trim(),
+        adminFullName: adminFullName.trim(),
+        username: username.trim(),
+        password,
+        managerPin: managerPin.trim(),
       });
 
-      await refreshCompany();
-      setShowSetupModal(false);
+      setStoredToken(res.token);
+      onSuccess(res.token, res.user);
     } catch (err: any) {
-      setError(err.message || 'حدث خطأ أثناء حفظ الإعدادات');
+      setError(err.message || 'حدث خطأ أثناء حفظ الإعدادات والتهيئة');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-        {/* Header Banner */}
-        <div className="bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 text-white p-6 sm:p-8 relative">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/30 border border-blue-400/40 flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-amber-300" />
-            </div>
-            <div>
-              <h2 className="text-xl sm:text-2xl font-black">معالج إعداد المنشأة والتشغيل الأولي</h2>
-              <p className="text-xs sm:text-sm text-blue-200">تخصيص بيانات مؤسستك وحساب المدير لبدء العمل الميداني الفوري</p>
-            </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-4 overflow-y-auto">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden animate-in fade-in zoom-in duration-200">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 text-white p-7 text-center space-y-2 relative">
+          <div className="w-12 h-12 rounded-2xl bg-blue-600/40 border border-blue-400/30 flex items-center justify-center mx-auto shadow-lg">
+            <Sparkles className="w-6 h-6 text-amber-300" />
           </div>
+          <h2 className="text-xl font-black">إعداد وتشغيل النظام لأول مرة</h2>
+          <p className="text-xs text-blue-200 max-w-md mx-auto">
+            مرحباً بك! لتأمين بياناتك، يرجى تحديد بيانات المنشأة وإنشاء حساب المدير الرئيسي.
+          </p>
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-6">
+        <form onSubmit={handleSubmit} className="p-7 space-y-5">
           {error && (
-            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold">
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold text-center">
               {error}
             </div>
           )}
 
-          {/* Section 1: Company Profile */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 border-b pb-2">
-              <Building2 className="w-5 h-5 text-blue-600" />
-              <h3 className="text-sm font-black text-slate-800">1. بيانات المنشأة والمؤسسة</h3>
+          {/* Company Name */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+              <Building2 className="w-4 h-4 text-blue-600" />
+              <span>اسم الشركة / المؤسسة *</span>
+            </label>
+            <input
+              type="text"
+              required
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="مثال: شركة الرضا للتوريدات"
+              className="w-full px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Admin Full Name */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                <User className="w-4 h-4 text-slate-500" />
+                <span>الاسم الكامل للمدير *</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={adminFullName}
+                onChange={(e) => setAdminFullName(e.target.value)}
+                placeholder="مثال: محمد رضا"
+                className="w-full px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+              />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  اسم الشركة / المنشأة <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="مثال: شركة الرضا للتوريدات"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">النشاط التجاري / الشعار</label>
-                <input
-                  type="text"
-                  value={tagline}
-                  onChange={(e) => setTagline(e.target.value)}
-                  placeholder="مثال: تجارة مواد البناء والتوريدات العامة"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">المقر والعنوان</label>
-                <input
-                  type="text"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="مثال: شارع عشماوي — كرداسة — الجيزة"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">أرقام الهواتف والتواصل</label>
-                <input
-                  type="text"
-                  value={phones}
-                  onChange={(e) => setPhones(e.target.value)}
-                  placeholder="مثال: 01030343576 / 01008681338"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
+            {/* Username */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-slate-500" />
+                <span>اسم مستخدم الدخول *</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="اسم المستخدم (3 أحرف فأكثر)"
+                className="w-full px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+              />
             </div>
           </div>
 
-          {/* Section 2: Admin & Manager Security */}
-          <div className="space-y-4 pt-2">
-            <div className="flex items-center gap-2 border-b pb-2">
-              <ShieldCheck className="w-5 h-5 text-emerald-600" />
-              <h3 className="text-sm font-black text-slate-800">2. حساب مدير النظام ومفتاح الاعتماد (PIN)</h3>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">الاسم الكامل لمدير النظام</label>
-                <input
-                  type="text"
-                  value={adminFullName}
-                  onChange={(e) => setAdminFullName(e.target.value)}
-                  placeholder="مثال: أحمد رضا أو مدير النظام"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">اسم مستخدم الدخول</label>
-                <input
-                  type="text"
-                  value={adminUsername}
-                  onChange={(e) => setAdminUsername(e.target.value)}
-                  placeholder="admin"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  كلمة المرور الجديدة <span className="text-[10px] text-slate-400">(اتركها فارغة للإبقاء على admin123456)</span>
-                </label>
-                <input
-                  type="password"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  placeholder="كلمة مرور قوية (اختياري)"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  رمز موافقة المدير (Manager PIN) <span className="text-rose-500">*</span>
-                  <span className="text-[10px] text-slate-400 block font-normal">مطلوب لتأكيد التعديلات الحساسة وإلغاء الفواتير</span>
-                </label>
-                <input
-                  type="password"
-                  maxLength={4}
-                  required
-                  value={managerPin}
-                  onChange={(e) => setManagerPin(e.target.value)}
-                  placeholder="1234"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono tracking-widest text-center text-sm font-bold bg-amber-50/50 border-amber-200"
-                />
-              </div>
+          {/* Password with strength meter */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Lock className="w-4 h-4 text-slate-500" />
+                <span>كلمة مرور المدير (12 حرف على الأقل) *</span>
+              </span>
+              <span className="text-[10px] font-bold text-slate-500">{strength.label}</span>
+            </label>
+            <input
+              type="password"
+              required
+              minLength={12}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="كلمة مرور قوية لا تقل عن 12 حرف"
+              className="w-full px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono"
+            />
+            {/* Password strength bar */}
+            <div className="w-full h-1.5 bg-slate-100 rounded-full mt-1.5 overflow-hidden flex">
+              <div
+                className={`h-full transition-all duration-300 ${strength.color}`}
+                style={{ width: `${(strength.score / 4) * 100}%` }}
+              />
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="pt-4 border-t flex items-center justify-between gap-4">
-            <button
-              type="button"
-              onClick={() => setShowSetupModal(false)}
-              className="px-4 py-2 text-xs text-slate-500 hover:text-slate-800 font-bold transition-colors"
-            >
-              تخطي واستخدام الإعدادات الافتراضية
-            </button>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-500/25 flex items-center gap-2 transition-all disabled:opacity-50"
-            >
-              {loading ? (
-                <span>جاري الحفظ والتهيئة...</span>
-              ) : (
-                <>
-                  <CheckCircle className="w-4 h-4" />
-                  <span>تأكيد البيانات وبدء تشغيل النظام</span>
-                </>
-              )}
-            </button>
+          {/* Manager PIN */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <KeyRound className="w-4 h-4 text-amber-600" />
+                <span>رمز موافقة المدير السري (Manager PIN) *</span>
+              </span>
+              <span className="text-[10px] text-amber-600 font-bold">4 أرقام سرية للمدير فقط</span>
+            </label>
+            <input
+              type="password"
+              maxLength={4}
+              required
+              value={managerPin}
+              onChange={(e) => setManagerPin(e.target.value.replace(/\D/g, ''))}
+              placeholder="••••"
+              className="w-full px-3.5 py-2.5 text-center text-lg font-bold tracking-widest border border-amber-300 bg-amber-50/50 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none font-mono"
+            />
+            <p className="text-[11px] text-slate-400 mt-1">
+              مطلوب لتأكيد العمليات الحساسة، تعديل السجلات المعتمدة، وإلغاء الفواتير.
+            </p>
           </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 transition-all disabled:opacity-50 mt-2"
+          >
+            {loading ? (
+              <span>جاري تشفير البيانات وتأسيس النظام...</span>
+            ) : (
+              <>
+                <CheckCircle className="w-4 h-4" />
+                <span>إنهاء الإعداد وبدء تشغيل النظام</span>
+              </>
+            )}
+          </button>
         </form>
       </div>
     </div>

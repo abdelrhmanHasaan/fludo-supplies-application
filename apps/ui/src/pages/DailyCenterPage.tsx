@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
+import { NumericInput } from '../components/NumericInput';
 import {
   ShoppingCart,
   ArrowDownLeft,
@@ -43,7 +44,30 @@ export const DailyCenterPage: React.FC = () => {
 
   useEffect(() => {
     loadMasterData();
+    // Restore draft invoice if saved
+    try {
+      const saved = localStorage.getItem('fludo_daily_sales_draft');
+      if (saved) {
+        const draft = JSON.parse(saved);
+        if (draft.selectedPartyId) setSelectedPartyId(draft.selectedPartyId);
+        if (draft.handlingFee !== undefined) setHandlingFee(draft.handlingFee);
+        if (draft.amountPaidNow !== undefined) setAmountPaidNow(draft.amountPaidNow);
+        if (draft.lines && Array.isArray(draft.lines) && draft.lines.length > 0) setLines(draft.lines);
+      }
+    } catch {}
   }, []);
+
+  // Auto-save draft on any changes
+  useEffect(() => {
+    try {
+      if (lines.length > 0 && (selectedPartyId || lines[0].productId || amountPaidNow > 0 || handlingFee > 0)) {
+        localStorage.setItem(
+          'fludo_daily_sales_draft',
+          JSON.stringify({ selectedPartyId, handlingFee, amountPaidNow, lines })
+        );
+      }
+    } catch {}
+  }, [selectedPartyId, handlingFee, amountPaidNow, lines]);
 
   const loadMasterData = async () => {
     try {
@@ -105,6 +129,9 @@ export const DailyCenterPage: React.FC = () => {
         lines: lines.map((l) => ({ productId: l.productId, qty: l.qty, unitPrice: l.unitPrice })),
       });
       setSuccessMsg(`تم إنشاء واعتماد الفاتورة بنجاح رقم المعاملة: ${res.invoiceId}`);
+      try {
+        localStorage.removeItem('fludo_daily_sales_draft');
+      } catch {}
       // Reset
       setLines([{ productId: '', qty: 1, unitPrice: 0, catalogPrice: 0 }]);
       setHandlingFee(0);
@@ -401,21 +428,19 @@ export const DailyCenterPage: React.FC = () => {
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">مصاريف المشال والتحميل (ج.م)</label>
-                <input
-                  type="number"
+                <NumericInput
                   value={handlingFee}
-                  onChange={(e) => setHandlingFee(parseFloat(e.target.value) || 0)}
-                  className="w-full border border-slate-300 rounded-lg p-2 text-sm text-center font-bold"
+                  onChange={setHandlingFee}
+                  className="w-full border-slate-300 text-center font-bold"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">المسدد نقداً الآن (ج.م)</label>
-                <input
-                  type="number"
+                <NumericInput
                   value={amountPaidNow}
-                  onChange={(e) => setAmountPaidNow(parseFloat(e.target.value) || 0)}
-                  className="w-full border border-slate-300 rounded-lg p-2 text-sm text-center font-bold text-emerald-700"
+                  onChange={setAmountPaidNow}
+                  className="w-full border-slate-300 text-center font-bold text-emerald-700"
                 />
               </div>
 
@@ -614,15 +639,11 @@ export const DailyCenterPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ السند (ج.م) *</label>
-              <input
-                type="number"
-                step="any"
-                min="1"
-                value={paymentAmount || ''}
-                onChange={(e) => setPaymentAmount(parseFloat(e.target.value) || 0)}
-                className="w-full border border-slate-300 rounded-lg p-2.5 text-lg font-bold text-center"
+              <NumericInput
+                value={paymentAmount}
+                onChange={setPaymentAmount}
+                className="w-full p-2.5 text-lg font-bold text-center border-slate-300"
                 placeholder="0.00"
-                required
               />
             </div>
 
@@ -681,15 +702,11 @@ export const DailyCenterPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">مبلغ المصروف (ج.م) *</label>
-              <input
-                type="number"
-                step="any"
-                min="1"
-                value={expenseAmount || ''}
-                onChange={(e) => setExpenseAmount(parseFloat(e.target.value) || 0)}
-                className="w-full border border-slate-300 rounded-lg p-2.5 text-lg font-bold text-center text-rose-700"
+              <NumericInput
+                value={expenseAmount}
+                onChange={setExpenseAmount}
+                className="w-full p-2.5 text-lg font-bold text-center text-rose-700 border-slate-300"
                 placeholder="0.00"
-                required
               />
             </div>
 
