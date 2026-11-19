@@ -23,67 +23,164 @@ async function parseExcelWorkbook(buffer) {
         },
         warnings: [],
     };
-    // 1. Settings Sheet (الاعدادات)
-    const settingsSheet = workbook.getWorksheet('الاعدادات') || workbook.getWorksheet('الأعدادات') || workbook.getWorksheet('Settings');
-    if (settingsSheet) {
-        settingsSheet.eachRow((row, rowNumber) => {
-            if (rowNumber >= 2) {
-                const nameVal = row.getCell(2).value?.toString().trim(); // B: اسم الصنف
-                const unitVal = row.getCell(3).value?.toString().trim(); // C: الوحده
-                const codeVal = row.getCell(4).value?.toString().trim(); // D: الكود
-                const priceVal = parseFloat(row.getCell(5).value?.toString() || '0'); // E: سعر اليوم
-                if (nameVal && nameVal !== 'اسم الصنف') {
-                    preview.productsFound.push({
-                        code: codeVal,
-                        name: nameVal,
-                        unit: unitVal,
-                        price: isNaN(priceVal) ? 0 : priceVal,
-                    });
+    // Helper: Try to parse sheet by column headers
+    const parseTableByHeaders = (sheet) => {
+        let headerRowIdx = -1;
+        const colMap = {};
+        sheet.eachRow((row, rowIdx) => {
+            if (headerRowIdx !== -1)
+                return;
+            row.eachCell((cell, colIdx) => {
+                const val = cell.value?.toString().trim().toLowerCase() || '';
+                if (val.includes('اسم العميل') ||
+                    val.includes('اسم الصنف') ||
+                    val.includes('اسم المورد') ||
+                    val === 'العميل' ||
+                    val === 'الصنف' ||
+                    val === 'المورد' ||
+                    val === 'customer' ||
+                    val === 'product' ||
+                    val === 'supplier') {
+                    headerRowIdx = rowIdx;
+                }
+            });
+            if (headerRowIdx === rowIdx) {
+                row.eachCell((cell, colIdx) => {
+                    const val = cell.value?.toString().trim().toLowerCase() || '';
+                    if (val.includes('اسم العميل') || val === 'العميل' || val.includes('customer'))
+                        colMap['customer_name'] = colIdx;
+                    if (val.includes('اسم المورد') || val === 'المورد' || val.includes('supplier'))
+                        colMap['supplier_name'] = colIdx;
+                    if (val.includes('اسم الصنف') || val === 'الصنف' || val.includes('المنتج') || val.includes('product'))
+                        colMap['product_name'] = colIdx;
+                    if (val.includes('كود') || val.includes('code'))
+                        colMap['code'] = colIdx;
+                    if (val.includes('هاتف') || val.includes('تليفون') || val.includes('موبايل') || val.includes('phone'))
+                        colMap['phone'] = colIdx;
+                    if (val.includes('وحد') || val.includes('unit'))
+                        colMap['unit'] = colIdx;
+                    if (val.includes('سعر') || val.includes('price'))
+                        colMap['price'] = colIdx;
+                    if (val.includes('رصيد') || val.includes('balance'))
+                        colMap['balance'] = colIdx;
+                });
+            }
+        });
+        if (headerRowIdx === -1)
+            return false;
+        let foundAny = false;
+        sheet.eachRow((row, rowIdx) => {
+            if (rowIdx <= headerRowIdx)
+                return;
+            // Check for Customer
+            if (colMap['customer_name']) {
+                const name = row.getCell(colMap['customer_name']).value?.toString().trim();
+                if (name && name !== 'اسم العميل' && name !== 'العميل') {
+                    const phone = colMap['phone'] ? row.getCell(colMap['phone']).value?.toString().trim() : undefined;
+                    const balVal = colMap['balance'] ? parseFloat(row.getCell(colMap['balance']).value?.toString() || '0') : 0;
+                    const balance = isNaN(balVal) ? 0 : balVal;
+                    if (!preview.customersFound.some((c) => c.name === name)) {
+                        preview.customersFound.push({ name, phone, totalPurchases: balance > 0 ? balance : 0, totalPaid: balance < 0 ? Math.abs(balance) : 0, balance });
+                        foundAny = true;
+                    }
+                }
+            }
+            // Check for Supplier
+            if (colMap['supplier_name']) {
+                const name = row.getCell(colMap['supplier_name']).value?.toString().trim();
+                if (name && name !== 'اسم المورد' && name !== 'المورد') {
+                    const balVal = colMap['balance'] ? parseFloat(row.getCell(colMap['balance']).value?.toString() || '0') : 0;
+                    const balance = isNaN(balVal) ? 0 : balVal;
+                    if (!preview.suppliersFound.some((s) => s.name === name)) {
+                        preview.suppliersFound.push({ name, totalPurchases: balance, totalPaid: 0, balance });
+                        foundAny = true;
+                    }
+                }
+            }
+            // Check for Product
+            if (colMap['product_name']) {
+                const name = row.getCell(colMap['product_name']).value?.toString().trim();
+                if (name && name !== 'اسم الصنف' && name !== 'الصنف') {
+                    const code = colMap['code'] ? row.getCell(colMap['code']).value?.toString().trim() : undefined;
+                    const unit = colMap['unit'] ? row.getCell(colMap['unit']).value?.toString().trim() : undefined;
+                    const priceVal = colMap['price'] ? parseFloat(row.getCell(colMap['price']).value?.toString() || '0') : 0;
+                    if (!preview.productsFound.some((p) => p.name === name)) {
+                        preview.productsFound.push({ code, name, unit, price: isNaN(priceVal) ? 0 : priceVal });
+                        foundAny = true;
+                    }
                 }
             }
         });
+        return foundAny;
+    };
+    // Try parsing each worksheet by standard headers first
+    workbook.eachSheet((sheet) => {
+        parseTableByHeaders(sheet);
+    });
+    // If table headers were not found, fallback to the legacy multi-cell daily workbook layout
+    if (preview.productsFound.length === 0) {
+        const settingsSheet = workbook.getWorksheet('الاعدادات') || workbook.getWorksheet('الأعدادات') || workbook.getWorksheet('Settings');
+        if (settingsSheet) {
+            settingsSheet.eachRow((row, rowNumber) => {
+                if (rowNumber >= 2) {
+                    const nameVal = row.getCell(2).value?.toString().trim();
+                    const unitVal = row.getCell(3).value?.toString().trim();
+                    const codeVal = row.getCell(4).value?.toString().trim();
+                    const priceVal = parseFloat(row.getCell(5).value?.toString() || '0');
+                    if (nameVal && nameVal !== 'اسم الصنف') {
+                        preview.productsFound.push({
+                            code: codeVal,
+                            name: nameVal,
+                            unit: unitVal,
+                            price: isNaN(priceVal) ? 0 : priceVal,
+                        });
+                    }
+                }
+            });
+        }
     }
-    // 2. Customers Sheet (حسابات العملاء)
-    const custSheet = workbook.getWorksheet('حسابات العملاء') || workbook.getWorksheet('العملاء') || workbook.getWorksheet('Customers');
-    if (custSheet) {
-        custSheet.eachRow((row, rowNumber) => {
-            const cellC = row.getCell(3).value?.toString().trim();
-            const cellD = row.getCell(4).value?.toString().trim();
-            if (cellC === 'اسم العميل' && cellD) {
-                const name = cellD;
-                const phone = row.getCell(6).value?.toString().trim() || undefined; // F: رقم الهاتف
-                // Totals row is typically 3-5 rows below
-                const totRow = custSheet.getRow(rowNumber + 5);
-                const purchVal = parseFloat(totRow.getCell(3).value?.toString() || '0'); // C: اجمالي مشتريات
-                const paidVal = parseFloat(totRow.getCell(4).value?.toString() || '0'); // D: خالص من العميل
-                const purchases = isNaN(purchVal) ? 0 : purchVal;
-                const paid = isNaN(paidVal) ? 0 : paidVal;
-                const balance = purchases - paid;
-                preview.customersFound.push({ name, phone, totalPurchases: purchases, totalPaid: paid, balance });
-                preview.totals.customerPurchases += purchases;
-                preview.totals.customerPaid += paid;
-            }
-        });
+    if (preview.customersFound.length === 0) {
+        const custSheet = workbook.getWorksheet('حسابات العملاء') || workbook.getWorksheet('العملاء') || workbook.getWorksheet('Customers');
+        if (custSheet) {
+            custSheet.eachRow((row, rowNumber) => {
+                const cellC = row.getCell(3).value?.toString().trim();
+                const cellD = row.getCell(4).value?.toString().trim();
+                if (cellC === 'اسم العميل' && cellD) {
+                    const name = cellD;
+                    const phone = row.getCell(6).value?.toString().trim() || undefined;
+                    const totRow = custSheet.getRow(rowNumber + 5);
+                    const purchVal = parseFloat(totRow.getCell(3).value?.toString() || '0');
+                    const paidVal = parseFloat(totRow.getCell(4).value?.toString() || '0');
+                    const purchases = isNaN(purchVal) ? 0 : purchVal;
+                    const paid = isNaN(paidVal) ? 0 : paidVal;
+                    const balance = purchases - paid;
+                    preview.customersFound.push({ name, phone, totalPurchases: purchases, totalPaid: paid, balance });
+                    preview.totals.customerPurchases += purchases;
+                    preview.totals.customerPaid += paid;
+                }
+            });
+        }
     }
-    // 3. Suppliers Sheet (حسابات الموردين)
-    const suppSheet = workbook.getWorksheet('حسابات الموردين') || workbook.getWorksheet('الموردين') || workbook.getWorksheet('Suppliers');
-    if (suppSheet) {
-        suppSheet.eachRow((row, rowNumber) => {
-            const cellC = row.getCell(3).value?.toString().trim();
-            const cellD = row.getCell(4).value?.toString().trim();
-            if (cellC === 'اسم المورد' && cellD) {
-                const name = cellD;
-                const totRow = suppSheet.getRow(rowNumber + 5);
-                const purchVal = parseFloat(totRow.getCell(3).value?.toString() || '0');
-                const paidVal = parseFloat(totRow.getCell(4).value?.toString() || '0');
-                const purchases = isNaN(purchVal) ? 0 : purchVal;
-                const paid = isNaN(paidVal) ? 0 : paidVal;
-                const balance = purchases - paid;
-                preview.suppliersFound.push({ name, totalPurchases: purchases, totalPaid: paid, balance });
-                preview.totals.supplierPurchases += purchases;
-                preview.totals.supplierPaid += paid;
-            }
-        });
+    if (preview.suppliersFound.length === 0) {
+        const suppSheet = workbook.getWorksheet('حسابات الموردين') || workbook.getWorksheet('الموردين') || workbook.getWorksheet('Suppliers');
+        if (suppSheet) {
+            suppSheet.eachRow((row, rowNumber) => {
+                const cellC = row.getCell(3).value?.toString().trim();
+                const cellD = row.getCell(4).value?.toString().trim();
+                if (cellC === 'اسم المورد' && cellD) {
+                    const name = cellD;
+                    const totRow = suppSheet.getRow(rowNumber + 5);
+                    const purchVal = parseFloat(totRow.getCell(3).value?.toString() || '0');
+                    const paidVal = parseFloat(totRow.getCell(4).value?.toString() || '0');
+                    const purchases = isNaN(purchVal) ? 0 : purchVal;
+                    const paid = isNaN(paidVal) ? 0 : paidVal;
+                    const balance = purchases - paid;
+                    preview.suppliersFound.push({ name, totalPurchases: purchases, totalPaid: paid, balance });
+                    preview.totals.supplierPurchases += purchases;
+                    preview.totals.supplierPaid += paid;
+                }
+            });
+        }
     }
     return preview;
 }

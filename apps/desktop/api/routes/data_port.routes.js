@@ -29,6 +29,14 @@ const dataPortRoutes = async (fastify) => {
         };
     });
     // 3. Export Customers to Excel
+    fastify.get('/template/excel', async (req, reply) => {
+        const buffer = await (0, exporter_js_1.generateImportTemplateExcel)();
+        reply
+            .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            .header('Content-Disposition', 'attachment; filename="fludo_import_template.xlsx"')
+            .send(buffer);
+    });
+    // 3. Export Customers to Excel
     fastify.get('/export/customers', async (req, reply) => {
         const client = await db_js_1.pool.connect();
         try {

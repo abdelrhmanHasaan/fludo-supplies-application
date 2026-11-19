@@ -24,6 +24,7 @@ const reports_routes_js_1 = require("./routes/reports.routes.js");
 const approvals_routes_js_1 = require("./routes/approvals.routes.js");
 const audit_routes_js_1 = require("./routes/audit.routes.js");
 const data_port_routes_js_1 = require("./routes/data_port.routes.js");
+const company_routes_js_1 = require("./routes/company.routes.js");
 dotenv_1.default.config();
 const fastify = (0, fastify_1.default)({
     logger: false,
@@ -110,6 +111,7 @@ async function start() {
     await fastify.register(approvals_routes_js_1.approvalsRoutes, { prefix: '/api/approvals' });
     await fastify.register(audit_routes_js_1.auditRoutes, { prefix: '/api/audit' });
     await fastify.register(data_port_routes_js_1.dataPortRoutes, { prefix: '/api/data' });
+    await fastify.register(company_routes_js_1.companyRoutes, { prefix: '/api/company' });
     await autoEnsureSchema();
     await autoSeedAdmin();
     const port = parseInt(process.env.PORT || '4000', 10);

@@ -7,6 +7,7 @@ exports.exportCustomersToExcel = exportCustomersToExcel;
 exports.exportProductsToExcel = exportProductsToExcel;
 exports.exportCustomerStatementToExcel = exportCustomerStatementToExcel;
 exports.exportDatabaseToSql = exportDatabaseToSql;
+exports.generateImportTemplateExcel = generateImportTemplateExcel;
 const exceljs_1 = __importDefault(require("exceljs"));
 async function exportCustomersToExcel(client) {
     const workbook = new exceljs_1.default.Workbook();
@@ -78,7 +79,7 @@ async function exportProductsToExcel(client) {
     FROM app.products p
     LEFT JOIN app.units u ON u.id = p.unit_id
     LEFT JOIN (
-      SELECT product_id, SUM(qty) AS physical_stock
+      SELECT product_id, SUM(quantity) AS physical_stock
       FROM app.stock_movements
       GROUP BY product_id
     ) v ON v.product_id = p.id
@@ -204,4 +205,46 @@ async function exportDatabaseToSql(client) {
     }
     sqlDump += 'COMMIT;\n';
     return sqlDump;
+}
+async function generateImportTemplateExcel() {
+    const workbook = new exceljs_1.default.Workbook();
+    // 1. Sheet: العملاء
+    const custSheet = workbook.addWorksheet('العملاء', { views: [{ rightToLeft: true }] });
+    custSheet.columns = [
+        { header: 'اسم العميل', key: 'name', width: 28 },
+        { header: 'رقم الهاتف', key: 'phone', width: 18 },
+        { header: 'العنوان', key: 'address', width: 24 },
+        { header: 'الرصيد الافتتاحي (ج.م)', key: 'balance', width: 22 },
+    ];
+    custSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    custSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+    custSheet.addRow({ name: 'شركة الأندلس للمقاولات', phone: '01012345678', address: 'الجيزة', balance: 45000 });
+    custSheet.addRow({ name: 'مكتب الهندسية للتجارة', phone: '01123456789', address: 'كرداسة', balance: 12500 });
+    // 2. Sheet: الموردين
+    const suppSheet = workbook.addWorksheet('الموردين', { views: [{ rightToLeft: true }] });
+    suppSheet.columns = [
+        { header: 'اسم المورد', key: 'name', width: 28 },
+        { header: 'رقم الهاتف', key: 'phone', width: 18 },
+        { header: 'الرصيد المستحق للمورد (ج.م)', key: 'balance', width: 24 },
+    ];
+    suppSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    suppSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF581C87' } };
+    suppSheet.addRow({ name: 'مصنع أسمنت حلوان', phone: '01234567890', balance: 80000 });
+    suppSheet.addRow({ name: 'محجر الأمل للرمل والزلط', phone: '01098765432', balance: 35000 });
+    // 3. Sheet: الأصناف والأسعار
+    const prodSheet = workbook.addWorksheet('المنتجات والأسعار', { views: [{ rightToLeft: true }] });
+    prodSheet.columns = [
+        { header: 'كود الصنف', key: 'code', width: 15 },
+        { header: 'اسم الصنف', key: 'name', width: 30 },
+        { header: 'الوحدة', key: 'unit', width: 15 },
+        { header: 'سعر البيع الافتراضي', key: 'price', width: 20 },
+    ];
+    prodSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    prodSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF065F46' } };
+    prodSheet.addRow({ code: 'P001', name: 'أسمنت بورتلاندي 42.5', unit: 'طن', price: 2850 });
+    prodSheet.addRow({ code: 'P002', name: 'رمل أحمر مباني ممتاز', unit: 'متر مكعب', price: 160 });
+    prodSheet.addRow({ code: 'P003', name: 'زلط سن 2 مخصوص', unit: 'متر مكعب', price: 290 });
+    prodSheet.addRow({ code: 'P004', name: 'طوب أسمنتي مصمت 25×12×6', unit: 'ألف', price: 1750 });
+    // @ts-ignore
+    return await workbook.xlsx.writeBuffer();
 }
