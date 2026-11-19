@@ -1,0 +1,53 @@
+const fs = require('fs');
+const path = require('path');
+
+function copyDirSync(src, dest) {
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
+  }
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+const rootDir = path.resolve(__dirname, '..');
+const uiDist = path.join(rootDir, 'apps', 'ui', 'dist');
+const uiTarget = path.join(rootDir, 'apps', 'desktop', 'ui');
+
+const apiDist = path.join(rootDir, 'services', 'api', 'dist');
+const apiTarget = path.join(rootDir, 'apps', 'desktop', 'api');
+
+console.log('[PREPARE] Copying UI bundle to desktop package...');
+if (fs.existsSync(uiDist)) {
+  copyDirSync(uiDist, uiTarget);
+  console.log('  ✓ UI copied successfully to:', uiTarget);
+} else {
+  console.error('  ✗ UI dist not found. Run npm run build:ui first.');
+  process.exit(1);
+}
+
+console.log('[PREPARE] Copying API bundle to desktop package...');
+if (fs.existsSync(apiDist)) {
+  copyDirSync(apiDist, apiTarget);
+  console.log('  ✓ API copied successfully to:', apiTarget);
+} else {
+  console.error('  ✗ API dist not found. Run npm run build:api first.');
+  process.exit(1);
+}
+
+const sqlMigration = path.join(rootDir, 'db', 'migrations', '0001_initial.sql');
+if (fs.existsSync(sqlMigration)) {
+  fs.copyFileSync(sqlMigration, path.join(apiTarget, '0001_initial.sql'));
+  fs.copyFileSync(sqlMigration, path.join(rootDir, 'apps', 'desktop', '0001_initial.sql'));
+  console.log('  ✓ Initial SQL schema migration copied to desktop package.');
+}
+
+console.log('[PREPARE] Packaging staging completed successfully.');
+

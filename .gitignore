@@ -1,0 +1,35 @@
+# Node dependencies
+node_modules/
+.npm/
+
+# Build outputs
+dist/
+build/
+release/
+apps/ui/dist/
+apps/desktop/dist/
+apps/desktop/build/
+services/api/dist/
+
+# Database data directories and live lock files
+data/pgdata/
+data/*.log
+*.log
+
+# Environment variables and secrets
+.env
+.env.local
+
+# Operating System files
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
+
+# Temporary test exports and screenshots
+test_*.xlsx
+test_*.sql
+tests/screenshots_deep/
+
+# Installer executable (tracked separately or via GitHub Releases to prevent repo bloat)
+installer/*.exe
+installer/*.blockmap

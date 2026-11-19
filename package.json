@@ -1,0 +1,25 @@
+{
+  "name": "fludo-supplies-erp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Building-Materials Yard ERP (Offline-First Windows Desktop + PostgreSQL) for Al-Reda Supplies Co.",
+  "workspaces": [
+    "services/api",
+    "apps/ui",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "start:db": "powershell -ExecutionPolicy Bypass -File scripts/start_db.ps1",
+    "dev:api": "npm --workspace=services/api run dev",
+    "dev:ui": "npm --workspace=apps/ui run dev",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:ui\"",
+    "build:api": "npm --workspace=services/api run build",
+    "build:ui": "npm --workspace=apps/ui run build",
+    "build": "npm run build:api && npm run build:ui",
+    "test": "npm --workspace=services/api test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "puppeteer-core": "^25.18.1"
+  }
+}
