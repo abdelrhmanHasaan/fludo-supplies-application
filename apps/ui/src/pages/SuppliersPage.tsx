@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import { Search, Plus, Truck, ArrowLeftRight, X } from 'lucide-react';
+import { Search, Plus, Truck, ArrowLeftRight, X, Trash2 } from 'lucide-react';
+import { SmartDeleteModal } from '../components/SmartDeleteModal';
 
 export const SuppliersPage: React.FC = () => {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -9,6 +10,7 @@ export const SuppliersPage: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showNettingModal, setShowNettingModal] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<any | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
 
   // New Supplier
   const [name, setName] = useState('');
@@ -142,19 +144,28 @@ export const SuppliersPage: React.FC = () => {
                     </span>
                   </td>
                   <td className="p-4 text-center">
-                    {s.is_customer && (
+                    <div className="flex items-center justify-center gap-2">
+                      {s.is_customer && (
+                        <button
+                          onClick={() => {
+                            setSelectedSupplier(s);
+                            setShowNettingModal(true);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 font-bold text-xs inline-flex items-center gap-1 border border-amber-200"
+                          title="تسوية مقاصة بين حساب المشتريات والمبيعات"
+                        >
+                          <ArrowLeftRight className="w-3.5 h-3.5" />
+                          <span>إجراء مقاصة</span>
+                        </button>
+                      )}
                       <button
-                        onClick={() => {
-                          setSelectedSupplier(s);
-                          setShowNettingModal(true);
-                        }}
-                        className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 font-bold text-xs inline-flex items-center gap-1 border border-amber-200"
-                        title="تسوية مقاصة بين حساب المشتريات والمبيعات"
+                        onClick={() => setDeleteTarget(s)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                        title="حذف المورد (تحقق ثنائي)"
                       >
-                        <ArrowLeftRight className="w-3.5 h-3.5" />
-                        <span>إجراء مقاصة</span>
+                        <Trash2 className="w-4 h-4" />
                       </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -290,6 +301,22 @@ export const SuppliersPage: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Smart 2-Step Verification Delete Modal */}
+      {deleteTarget && (
+        <SmartDeleteModal
+          isOpen={true}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            setDeleteTarget(null);
+            loadSuppliers();
+          }}
+          entityType="supplier"
+          entityId={deleteTarget.id}
+          entityName={deleteTarget.name}
+          entitySubtitle={deleteTarget.phone ? `هاتف: ${deleteTarget.phone}` : undefined}
+        />
       )}
     </div>
   );

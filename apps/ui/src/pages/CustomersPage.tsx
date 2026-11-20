@@ -11,7 +11,9 @@ import {
   UserCheck,
   Phone,
   MapPin,
+  Trash2,
 } from 'lucide-react';
+import { SmartDeleteModal } from '../components/SmartDeleteModal';
 
 export const CustomersPage: React.FC = () => {
   const { company } = useCompany();
@@ -27,6 +29,7 @@ export const CustomersPage: React.FC = () => {
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newAddress, setNewAddress] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
 
   useEffect(() => {
     loadCustomers();
@@ -173,12 +176,21 @@ export const CustomersPage: React.FC = () => {
                       </span>
                     </td>
                     <td className="p-4 text-center">
-                      <button
-                        onClick={() => handleOpenStatement(c)}
-                        className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold text-xs transition-colors"
-                      >
-                        كشف حساب
-                      </button>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          onClick={() => handleOpenStatement(c)}
+                          className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold text-xs transition-colors"
+                        >
+                          كشف حساب
+                        </button>
+                        <button
+                          onClick={() => setDeleteTarget(c)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                          title="حذف العميل (تحقق ثنائي)"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -355,6 +367,22 @@ export const CustomersPage: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Smart 2-Step Verification Delete Modal */}
+      {deleteTarget && (
+        <SmartDeleteModal
+          isOpen={true}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            setDeleteTarget(null);
+            loadCustomers();
+          }}
+          entityType="customer"
+          entityId={deleteTarget.id}
+          entityName={deleteTarget.name}
+          entitySubtitle={deleteTarget.phone ? `هاتف: ${deleteTarget.phone}` : undefined}
+        />
       )}
     </div>
   );

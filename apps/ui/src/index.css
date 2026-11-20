@@ -10,13 +10,92 @@
 
 /* Print Styling */
 @media print {
-  aside, nav, .no-print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm;
+  }
+
+  *, *:before, *:after {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  body, html {
+    background: #ffffff !important;
+    color: #000000 !important;
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+    font-size: 11pt !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide navigation, toolbars, buttons, tooltips */
+  aside, nav, header, button, .no-print, [role="tooltip"], .lucide {
     display: none !important;
   }
+
   main {
     margin: 0 !important;
     padding: 0 !important;
+    width: 100% !important;
+    overflow: visible !important;
+    background: transparent !important;
   }
+
+  /* Make modal printable by resetting fixed positioning and scrollbars */
+  .fixed.inset-0 {
+    position: static !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+  }
+
+  .fixed.inset-0 > div {
+    max-width: 100% !important;
+    max-height: none !important;
+    box-shadow: none !important;
+    border: none !important;
+    overflow: visible !important;
+    width: 100% !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+  }
+
+  .overflow-y-auto, .overflow-hidden {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+  }
+
+  /* Table page breaking */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    page-break-after: auto !important;
+  }
+
+  th, td {
+    border-color: #334155 !important;
+  }
+
   .print-only {
     display: block !important;
   }

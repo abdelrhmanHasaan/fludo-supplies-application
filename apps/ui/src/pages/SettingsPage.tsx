@@ -1,14 +1,51 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { useCompany } from '../context/CompanyContext';
-import { Settings, ShieldCheck, KeyRound, History, RefreshCw, AlertCircle, Building2, Edit } from 'lucide-react';
+import {
+  Settings,
+  ShieldCheck,
+  KeyRound,
+  History,
+  RefreshCw,
+  AlertCircle,
+  Building2,
+  Edit,
+  X,
+  CheckCircle2,
+  Lock,
+  User,
+  Trash2,
+  AlertTriangle,
+} from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
-  const { company, logoLetter, setShowSetupModal } = useCompany();
+  const { company, logoLetter, refreshCompany } = useCompany();
   const [logs, setLogs] = useState<any[]>([]);
   const [auditStatus, setAuditStatus] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
+
+  // Edit Company & Manager Modal
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editNameAr, setEditNameAr] = useState(company.name_ar || '');
+  const [editNameEn, setEditNameEn] = useState(company.name_en || '');
+  const [editTagline, setEditTagline] = useState(company.tagline || '');
+  const [editAddress, setEditAddress] = useState(company.address || '');
+  const [editPhones, setEditPhones] = useState(company.phones || '');
+  const [editAdminName, setEditAdminName] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editPin, setEditPin] = useState('');
+  const [currentPin, setCurrentPin] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSuccess, setEditSuccess] = useState<string | null>(null);
+
+  // Reset Movements Modal
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetPin, setResetPin] = useState('');
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -17,13 +54,102 @@ export const SettingsPage: React.FC = () => {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const [l, v] = await Promise.all([api.getAuditLogs(), api.verifyAuditChain()]);
+      const [l, v, authSt] = await Promise.all([
+        api.getAuditLogs(),
+        api.verifyAuditChain(),
+        api.getAuthStatus() as any,
+      ]);
       setLogs(l);
       setAuditStatus(v);
+      if (authSt?.adminName) {
+        setEditAdminName(authSt.adminName);
+      }
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenEdit = () => {
+    setEditNameAr(company.name_ar || '');
+    setEditNameEn(company.name_en || '');
+    setEditTagline(company.tagline || '');
+    setEditAddress(company.address || '');
+    setEditPhones(company.phones || '');
+    setEditPassword('');
+    setEditPin('');
+    setCurrentPin('');
+    setEditError(null);
+    setEditSuccess(null);
+    setShowEditModal(true);
+  };
+
+  const handleSaveCompanyAndManager = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editNameAr.trim()) {
+      setEditError('اسم المنشأة بالعربي مطلوب');
+      return;
+    }
+
+    if (editPassword && editPassword.length < 12) {
+      setEditError('كلمة المرور الجديدة يجب ألا تقل عن 12 حرفاً');
+      return;
+    }
+
+    if (editPin && !/^\d{4}$/.test(editPin.trim())) {
+      setEditError('رمز PIN الجديد يجب أن يتكون من 4 أرقام');
+      return;
+    }
+
+    setSavingEdit(true);
+    setEditError(null);
+    try {
+      await api.updateCompanyAndManager({
+        name_ar: editNameAr.trim(),
+        name_en: editNameEn.trim(),
+        tagline: editTagline.trim(),
+        address: editAddress.trim(),
+        phones: editPhones.trim(),
+        admin_full_name: editAdminName.trim(),
+        new_password: editPassword.trim() || undefined,
+        new_pin: editPin.trim() || undefined,
+        current_pin: currentPin.trim() || undefined,
+      });
+
+      await refreshCompany();
+      setEditSuccess('تم حفظ وتحديث بيانات المنشأة وحساب المدير بنجاح!');
+      setTimeout(() => {
+        setShowEditModal(false);
+      }, 1200);
+    } catch (err: any) {
+      setEditError(err.message || 'فشل حفظ التعديلات');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleConfirmReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetPin || resetPin.length !== 4) {
+      setResetError('يرجى إدخال رمز موافقة المدير (4 أرقام)');
+      return;
+    }
+
+    setResetting(true);
+    setResetError(null);
+    try {
+      const res = await api.resetOperationalData(resetPin.trim());
+      setResetSuccess(res.message || 'تم تفريغ النظام وتصفير الحركات بنجاح مع الحفاظ على الأصناف والمخزون!');
+      setTimeout(() => {
+        setShowResetModal(false);
+        setResetPin('');
+        loadSettings();
+      }, 1500);
+    } catch (err: any) {
+      setResetError(err.message || 'فشل تصفير النظام، تأكد من صحة رمز PIN');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -49,7 +175,7 @@ export const SettingsPage: React.FC = () => {
           <span>إعدادات المنشأة، الأمان، وسجل التدقيق المشفر</span>
         </h2>
         <p className="text-xs text-slate-500 mt-1">
-          إدارة بيانات الشركة، حسابات المستخدمين، وحماية السجلات المالية بسلسلة تشفيرية SHA-256
+          إدارة وتعديل بيانات المنشأة، حساب المدير، وحماية السجلات المالية بسلسلة تشفيرية SHA-256
         </p>
       </div>
 
@@ -62,13 +188,15 @@ export const SettingsPage: React.FC = () => {
           <div>
             <h3 className="text-lg font-black text-slate-800">{company.name_ar}</h3>
             <p className="text-xs text-slate-500 font-medium">{company.tagline || 'مواد البناء والتوريدات العامة'}</p>
-            <p className="text-xs text-slate-400 mt-0.5">{company.address} {company.phones ? `— هاتف: ${company.phones}` : ''}</p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {company.address} {company.phones ? `— هاتف: ${company.phones}` : ''}
+            </p>
           </div>
         </div>
 
         <button
-          onClick={() => setShowSetupModal(true)}
-          className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0"
+          onClick={handleOpenEdit}
+          className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 shadow-sm"
         >
           <Edit className="w-4 h-4" />
           <span>تعديل بيانات المنشأة والمدير</span>
@@ -113,6 +241,36 @@ export const SettingsPage: React.FC = () => {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Maintenance & Clean Reset Card */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="font-bold text-base text-slate-800">
+              تصفير وتفريغ الحركات التشغيلية (Clean Reset)
+            </h3>
+            <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
+              يقوم بتصفير كافة فواتير المبيعات والمشتريات وحركات اليومية ومسح العملاء والموردين التجريبيين لبدء العمل الفعلي، مع <strong>الحفاظ الكامل على كافة الأصناف والمستودع ووحدات القياس وحساب المدير</strong>.
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            setResetPin('');
+            setResetError(null);
+            setResetSuccess(null);
+            setShowResetModal(true);
+          }}
+          className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 shadow-sm"
+        >
+          <Trash2 className="w-4 h-4" />
+          <span>تصفير وتفريغ الحركات (بإذن المدير)</span>
+        </button>
       </div>
 
       {/* Audit Log Table */}
@@ -174,7 +332,284 @@ export const SettingsPage: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* Edit Company & Manager Details Modal */}
+      {showEditModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowEditModal(false);
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-xl w-full border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-5 bg-gradient-to-r from-blue-900 to-indigo-950 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-blue-600 text-white shadow-md">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base">تعديل بيانات المنشأة والمدير</h3>
+                  <p className="text-xs text-blue-200">تحديث الهوية التجارية، العناوين، وكلمة سر المدير</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditModal(false)}
+                className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveCompanyAndManager} className="p-6 overflow-y-auto space-y-5">
+              {editError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-bold text-center">
+                  {editError}
+                </div>
+              )}
+              {editSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-bold text-center flex items-center justify-center gap-2">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{editSuccess}</span>
+                </div>
+              )}
+
+              {/* Section 1: Company Profile */}
+              <div className="space-y-3">
+                <span className="text-xs font-black text-blue-900 border-r-2 border-blue-600 pr-2 block">
+                  1. بيانات المنشأة والهوية التجارية
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">اسم المنشأة بالعربي *</label>
+                    <input
+                      type="text"
+                      value={editNameAr}
+                      onChange={(e) => setEditNameAr(e.target.value)}
+                      placeholder="شركة الرضا للتوريدات"
+                      className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-bold"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">الاسم بالإنجليزي</label>
+                    <input
+                      type="text"
+                      value={editNameEn}
+                      onChange={(e) => setEditNameEn(e.target.value)}
+                      placeholder="AL REDA SUPPLIES CO."
+                      className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">النشاط / الشعار اللفظي</label>
+                  <input
+                    type="text"
+                    value={editTagline}
+                    onChange={(e) => setEditTagline(e.target.value)}
+                    placeholder="مواد البناء والتوريدات العامة"
+                    className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">العنوان / المقر</label>
+                    <input
+                      type="text"
+                      value={editAddress}
+                      onChange={(e) => setEditAddress(e.target.value)}
+                      placeholder="شارع عشماوي، كرداسة، الجيزة"
+                      className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">أرقام الهواتف</label>
+                    <input
+                      type="text"
+                      value={editPhones}
+                      onChange={(e) => setEditPhones(e.target.value)}
+                      placeholder="01030343576 / 01008681338"
+                      className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: Manager Profile & Security */}
+              <div className="space-y-3 pt-3 border-t border-slate-100">
+                <span className="text-xs font-black text-blue-900 border-r-2 border-blue-600 pr-2 block">
+                  2. بيانات المدير العام والأمان
+                </span>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">اسم المسؤول / المدير الكامل</label>
+                  <input
+                    type="text"
+                    value={editAdminName}
+                    onChange={(e) => setEditAdminName(e.target.value)}
+                    placeholder="محمد رضا"
+                    className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      كلمة مرور جديدة (اختياري)
+                    </label>
+                    <input
+                      type="password"
+                      value={editPassword}
+                      onChange={(e) => setEditPassword(e.target.value)}
+                      placeholder="اتركها فارغة للإبقاء على الحالية"
+                      className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                    />
+                    <span className="text-[10px] text-slate-400 block mt-0.5">12 حرفاً على الأقل في حال التغيير</span>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      رمز موافقة المدير الجديد PIN (4 أرقام)
+                    </label>
+                    <input
+                      type="password"
+                      maxLength={4}
+                      value={editPin}
+                      onChange={(e) => setEditPin(e.target.value.replace(/\D/g, ''))}
+                      placeholder="••••"
+                      className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-mono text-center tracking-widest"
+                    />
+                    <span className="text-[10px] text-slate-400 block mt-0.5">اتركه فارغاً للإبقاء على الرمز الحالي</span>
+                  </div>
+                </div>
+
+                {(editPassword || editPin) && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                    <label className="block text-xs font-bold text-amber-900 mb-1">
+                      تأكيد رمز PIN الحالي للمدير:
+                    </label>
+                    <input
+                      type="password"
+                      maxLength={4}
+                      value={currentPin}
+                      onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ''))}
+                      placeholder="أدخل الرمز الحالي لتأكيد التغيير"
+                      className="w-full border border-amber-300 rounded-xl p-2 text-xs outline-none font-mono text-center tracking-widest bg-white"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-600/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  <span>{savingEdit ? 'جاري الحفظ...' : 'حفظ التعديلات الآن'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Clean Reset Confirmation Modal */}
+      {showResetModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowResetModal(false);
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 bg-rose-600 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-white" />
+                <h3 className="font-bold text-sm">تأكيد تصفير الحركات وتفريغ النظام</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowResetModal(false)}
+                className="p-1 rounded-lg text-rose-200 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmReset} className="p-6 space-y-4">
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 space-y-1">
+                <p className="font-bold">تحذير أمني:</p>
+                <p>
+                  سيتم تفريغ كافة حركات الفواتير والمدفوعات والمصروفات والعملاء والموردين. <strong>الأصناف والمخزون وحساب المدير ستبقى محفوظة بالكامل</strong>.
+                </p>
+              </div>
+
+              {resetError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs font-bold text-center">
+                  {resetError}
+                </div>
+              )}
+              {resetSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-bold text-center">
+                  {resetSuccess}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5 text-center">
+                  أدخل رمز موافقة المدير (4 أرقام) للتأكيد
+                </label>
+                <input
+                  type="password"
+                  maxLength={4}
+                  value={resetPin}
+                  onChange={(e) => setResetPin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="••••"
+                  className="w-full text-center text-2xl tracking-[0.5em] font-mono border-2 border-slate-300 rounded-xl p-2.5 focus:border-rose-500 focus:ring-2 focus:ring-rose-200 outline-none transition-all shadow-inner bg-slate-50"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowResetModal(false)}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={resetting || resetPin.length !== 4}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-600/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  <span>{resetting ? 'جاري التصفير...' : 'تأكيد التصفير والتفريغ'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
-

@@ -166,4 +166,7 @@ export const api = {
   getCompanyProfile: () => apiFetch<any>('/company/profile'),
   updateCompanyProfile: (data: any) => apiFetch<any>('/company/profile', { method: 'PUT', body: JSON.stringify(data) }),
   setupCompany: (data: any) => apiFetch<any>('/company/setup', { method: 'POST', body: JSON.stringify(data) }),
+  updateCompanyAndManager: (data: any) => apiFetch<any>('/company/manage', { method: 'PUT', body: JSON.stringify(data) }),
+  smartDelete: (type: string, id: string, pin: string) => apiFetch<any>('/company/delete-item', { method: 'POST', body: JSON.stringify({ type, id, pin }) }),
+  resetOperationalData: (pin: string) => apiFetch<any>('/company/reset-movements', { method: 'POST', body: JSON.stringify({ pin }) }),
 };

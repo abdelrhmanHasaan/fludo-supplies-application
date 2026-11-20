@@ -101,7 +101,7 @@ const MainApp: React.FC = () => {
     }
   };
 
-  // 3. Global Shortcuts: F2 for Daily, Ctrl+K for Search
+  // 3. Global Shortcuts: F2 for Daily, Ctrl+K for Search, Escape to Close Modals
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F2') {
@@ -110,6 +110,8 @@ const MainApp: React.FC = () => {
       } else if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();
         setSearchModalOpen((prev) => !prev);
+      } else if (e.key === 'Escape') {
+        setSearchModalOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);

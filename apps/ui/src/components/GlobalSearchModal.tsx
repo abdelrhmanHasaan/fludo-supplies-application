@@ -28,6 +28,20 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ isOpen, on
 
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Global keydown listener so ESC works even if focus is not in input
+  useEffect(() => {
+    if (!isOpen) return;
+    const onGlobalKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onGlobalKey, true);
+    return () => window.removeEventListener('keydown', onGlobalKey, true);
+  }, [isOpen, onClose]);
+
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 50);
@@ -120,8 +134,15 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ isOpen, on
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden flex flex-col max-h-[75vh]">
+    <div 
+      className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden flex flex-col max-h-[75vh]" onClick={(e) => e.stopPropagation()}>
         {/* Search Input Bar */}
         <div className="p-4 border-b border-slate-200 flex items-center gap-3">
           <Search className="w-5 h-5 text-slate-400 shrink-0" />
@@ -135,13 +156,30 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ isOpen, on
             className="flex-1 text-sm font-medium outline-none text-slate-800 placeholder-slate-400"
           />
           {query && (
-            <button onClick={() => setQuery('')} className="text-slate-400 hover:text-slate-600">
+            <button 
+              type="button"
+              onClick={() => setQuery('')} 
+              className="text-slate-400 hover:text-slate-600 p-1"
+              title="مسح النص"
+            >
               <X className="w-4 h-4" />
             </button>
           )}
-          <kbd className="hidden sm:inline-block px-2 py-0.5 text-[10px] font-bold text-slate-500 bg-slate-100 rounded border border-slate-200">
+          <kbd 
+            onClick={onClose}
+            className="hidden sm:inline-block px-2 py-0.5 text-[10px] font-bold text-slate-500 bg-slate-100 rounded border border-slate-200 cursor-pointer hover:bg-slate-200"
+            title="إغلاق (Esc)"
+          >
             ESC
           </kbd>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            title="إغلاق نافذة البحث"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Category Filter Tabs */}

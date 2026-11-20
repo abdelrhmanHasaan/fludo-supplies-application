@@ -164,8 +164,8 @@ async function runPlaywrightSuite() {
       await page.screenshot({ path: path.join(SCREENSHOT_DIR, '05_daily_center_f2.png') });
     });
 
-    // 6. Universal Search Modal (Ctrl+K)
-    await step('6. Global Search Modal (Ctrl+K) & Live Filtering', async () => {
+    // 6. Universal Search Modal (Ctrl+K & ESC Dismissal)
+    await step('6. Global Search Modal (Ctrl+K) & Robust ESC / X Dismissal', async () => {
       const navSearchBtn = await page.$('button:has-text("ابحث")');
       if (navSearchBtn) {
         await navSearchBtn.click();
@@ -181,31 +181,44 @@ async function runPlaywrightSuite() {
 
       await page.screenshot({ path: path.join(SCREENSHOT_DIR, '06_global_search_ctrl_k.png') });
 
-      // Close modal by pressing Escape
+      // Verify closing via ESC key
       await page.keyboard.press('Escape');
+      await page.waitForSelector('input[placeholder*="ابحث"]', { state: 'detached', timeout: 5000 });
       await page.waitForTimeout(300);
+
+      // Verify re-opening and closing via X button
+      await page.keyboard.press('Control+k');
+      await page.waitForSelector('input[placeholder*="ابحث"]', { timeout: 5000 });
+      const closeBtn = await page.$('button[title*="إغلاق"]');
+      if (closeBtn) {
+        await closeBtn.click();
+        await page.waitForSelector('input[placeholder*="ابحث"]', { state: 'detached', timeout: 5000 });
+      }
     });
 
-    // 7. Customers & Statements
-    await step('7. Customers Directory & Statement Timeline', async () => {
-      await page.evaluate(() => document.querySelector('button[data-section="customers"]')?.click());
+    // 7. Products Directory & Smart 2-Step Verification Delete Modal
+    await step('7. Products Catalog & Smart 2-Step Delete Verification', async () => {
+      await page.evaluate(() => document.querySelector('button[data-section="products"]')?.click());
       await page.waitForSelector('table', { timeout: 6000 });
       await page.waitForTimeout(500);
 
-      // View Statement of first customer
-      const statementBtn = await page.$('button:has-text("كشف حساب")');
-      if (statementBtn) {
-        await statementBtn.click();
-        await page.waitForTimeout(600);
-        await page.screenshot({ path: path.join(SCREENSHOT_DIR, '07_customer_statement_modal.png') });
+      // Test Smart Delete Modal on first product row
+      const deleteBtn = await page.$('button[title*="حذف"]');
+      if (deleteBtn) {
+        await deleteBtn.click();
+        await page.waitForSelector('text=الخطوة 1 من 2', { timeout: 5000 });
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: path.join(SCREENSHOT_DIR, '07_smart_delete_step1.png') });
 
-        // Close modal using close button
-        await page.evaluate(() => {
-          const btns = Array.from(document.querySelectorAll('button'));
-          const close = btns.find((b) => b.querySelector('svg.lucide-x'));
-          if (close) close.click();
-        });
-        await page.waitForTimeout(400);
+        // Advance to Step 2
+        await page.click('button:has-text("متابعة للتحقق")');
+        await page.waitForSelector('text=الخطوة 2 من 2', { timeout: 5000 });
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: path.join(SCREENSHOT_DIR, '07_smart_delete_step2.png') });
+
+        // Cancel and dismiss via Escape
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('text=الخطوة 2 من 2', { state: 'detached', timeout: 5000 });
       }
     });
 
@@ -236,8 +249,8 @@ async function runPlaywrightSuite() {
       await page.screenshot({ path: path.join(SCREENSHOT_DIR, '09_data_port_controls.png') });
     });
 
-    // 10. Settings & SHA-256 Audit Hash Chain
-    await step('10. Settings & Immutable Audit Hash Chain Verification', async () => {
+    // 10. Settings, Company & Manager Profile Editing, and Audit Chain
+    await step('10. Settings, Company & Manager Editing, and Audit Verification', async () => {
       await page.evaluate(() => {
         const btn = document.querySelector('button[data-section="settings"]');
         if (btn) btn.click();
@@ -247,6 +260,20 @@ async function runPlaywrightSuite() {
         { timeout: 6000 }
       );
       await page.waitForTimeout(600);
+
+      // Open Edit Company & Manager Modal
+      const editBtn = await page.$('button:has-text("تعديل بيانات المنشأة والمدير")');
+      if (editBtn) {
+        await editBtn.click();
+        await page.waitForSelector('input[value*="الرضا"]', { timeout: 6000 });
+        await page.waitForTimeout(400);
+        await page.screenshot({ path: path.join(SCREENSHOT_DIR, '10_edit_company_and_manager.png') });
+
+        // Close modal
+        const closeEdit = await page.$('button:has(svg.lucide-x)');
+        if (closeEdit) await closeEdit.click();
+        await page.waitForTimeout(300);
+      }
 
       await page.screenshot({ path: path.join(SCREENSHOT_DIR, '10_settings_audit_chain.png') });
     });

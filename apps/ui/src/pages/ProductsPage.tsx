@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import { Tag, Plus, FileSpreadsheet, Search, X } from 'lucide-react';
+import { Tag, Plus, FileSpreadsheet, Search, X, Trash2 } from 'lucide-react';
+import { SmartDeleteModal } from '../components/SmartDeleteModal';
 
 export const ProductsPage: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
@@ -8,6 +9,7 @@ export const ProductsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
 
   // Form states
   const [code, setCode] = useState('');
@@ -108,18 +110,19 @@ export const ProductsPage: React.FC = () => {
               <th className="p-4">الوحدة</th>
               <th className="p-4 text-center">سعر اليوم الافتراضي (ج.م)</th>
               <th className="p-4 text-center">الرصيد الفعلي</th>
+              <th className="p-4 text-center">إجراءات</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {loading ? (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-slate-400">
+                <td colSpan={7} className="p-8 text-center text-slate-400">
                   جاري تحميل دليل الأصناف...
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-slate-400">
+                <td colSpan={7} className="p-8 text-center text-slate-400">
                   لا توجد أصناف مطابقة للبحث
                 </td>
               </tr>
@@ -137,6 +140,15 @@ export const ProductsPage: React.FC = () => {
                   </td>
                   <td className="p-4 text-center font-bold text-slate-700">
                     {p.physical_stock.toLocaleString()}
+                  </td>
+                  <td className="p-4 text-center">
+                    <button
+                      onClick={() => setDeleteTarget(p)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                      title="حذف الصنف (تحقق ثنائي)"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </td>
                 </tr>
               ))
@@ -240,6 +252,22 @@ export const ProductsPage: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Smart 2-Step Verification Delete Modal */}
+      {deleteTarget && (
+        <SmartDeleteModal
+          isOpen={true}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            setDeleteTarget(null);
+            loadProducts();
+          }}
+          entityType="product"
+          entityId={deleteTarget.product_id}
+          entityName={deleteTarget.product_name}
+          entitySubtitle={`كود الصنف: ${deleteTarget.product_code}`}
+        />
       )}
     </div>
   );

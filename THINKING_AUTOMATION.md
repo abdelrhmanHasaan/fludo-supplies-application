@@ -7,12 +7,14 @@
 ## 1. Current State & Memory Snapshot
 
 * **System Identity:** Antigravity Autonomous Lead Architect & Senior Fullstack Engineer.
-* **Current Phase:** Version 1.2.0 RELEASED & VERIFIED (Password-Only Fast Login + Streamlined Setup Wizard + Playwright 10/10 + Production Windows Installer).
+* **Current Phase:** Version 1.3.0 RELEASED & VERIFIED (ESC Search Dismissal + Company & Manager Management + Print Engine Overhaul + Smart 2-Step Delete + Clean Reset with 46 Products Preserved + Playwright 10/10 + Production Windows Installer).
 * **Active Goal:** Build, test, package, and publish the complete enterprise-grade, offline-first Windows ERP for Building-Materials Yard (Fludo ERP), featuring:
-  - Version 1.2.0: Single-field password/PIN unlock screen with zero username prompt.
-  - Streamlined First-Run Wizard: Prompts for Company Name, Manager Full Name, Password (>=12 chars with strength meter), and 4-digit PIN.
-  - 14 full business workflow modules.
-  - Standalone Windows `.exe` setup installer (`installer/Fludo Supplies ERP Setup 1.2.0.exe`).
+  - Version 1.3.0: Robust ESC / X / backdrop search modal closing.
+  - Live Company and Manager Profile Management modal in Settings (`PUT /api/company/manage`).
+  - Professional Print Engine Overhaul (`@media print` A4 pagination, exact colors, zero cutoff).
+  - Smart 2-Step Verification Delete (`SmartDeleteModal.tsx` + 4-digit Manager PIN).
+  - Clean operational reset executed: 46 products preserved in warehouse, all test transactions cleared, Trial balance = 0.00.
+  - Standalone Windows `.exe` setup installer (`installer/Fludo Supplies ERP Setup 1.3.0.exe`).
   - Remote GitHub synchronization with `https://github.com/abdelrhmanHasaan/fludo-supplies-application.git`.
 * **Safety Mandate:** The attached client database `database.sql` is strictly preserved untouched. Isolated PostgreSQL runs on port 5433 with full schema and seed data.
 * **Automated UI Testing Results:**

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { useCompany } from '../context/CompanyContext';
-import { FileText, Printer, Search, X, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { FileText, Printer, Search, X, ShieldAlert, CheckCircle2, Trash2 } from 'lucide-react';
 import { ManagerPinModal } from '../components/ManagerPinModal';
+import { SmartDeleteModal } from '../components/SmartDeleteModal';
 
 export const InvoicesPage: React.FC = () => {
   const { company, logoLetter } = useCompany();
@@ -11,6 +12,7 @@ export const InvoicesPage: React.FC = () => {
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [invoiceDetails, setInvoiceDetails] = useState<any | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
 
   // Cancellation & PIN
   const [showPinModal, setShowPinModal] = useState(false);
@@ -144,13 +146,22 @@ export const InvoicesPage: React.FC = () => {
                     </span>
                   </td>
                   <td className="p-4 text-center">
-                    <button
-                      onClick={() => handleOpenInvoice(inv)}
-                      className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold text-xs inline-flex items-center gap-1"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>معاينة وطباعة</span>
-                    </button>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <button
+                        onClick={() => handleOpenInvoice(inv)}
+                        className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold text-xs inline-flex items-center gap-1"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>معاينة وطباعة</span>
+                      </button>
+                      <button
+                        onClick={() => setDeleteTarget(inv)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                        title="حذف الفاتورة (تحقق ثنائي)"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -343,6 +354,22 @@ export const InvoicesPage: React.FC = () => {
         defaultId={cancelTargetId}
         onApprovalGranted={handleApprovalGranted}
       />
+
+      {/* Smart 2-Step Verification Delete Modal */}
+      {deleteTarget && (
+        <SmartDeleteModal
+          isOpen={true}
+          onClose={() => setDeleteTarget(null)}
+          onSuccess={() => {
+            setDeleteTarget(null);
+            loadInvoices();
+          }}
+          entityType="invoice"
+          entityId={deleteTarget.id}
+          entityName={`فاتورة مبيعات: ${deleteTarget.invoice_no}`}
+          entitySubtitle={`العميل: ${deleteTarget.party_name || '—'} — المبلغ: ${deleteTarget.total_due.toLocaleString()} ج.م`}
+        />
+      )}
     </div>
   );
 };
