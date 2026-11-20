@@ -22,6 +22,7 @@ import { auditRoutes } from './routes/audit.routes.js';
 import { dataPortRoutes } from './routes/data_port.routes.js';
 import { companyRoutes } from './routes/company.routes.js';
 import { searchRoutes } from './routes/search.routes.js';
+import { syncRoutes } from './routes/sync.routes.js';
 
 dotenv.config();
 
@@ -53,7 +54,8 @@ async function autoEnsureSchema() {
       const sql1Path = migration1Paths.find((p) => fs.existsSync(p));
       if (sql1Path) {
         const sql = fs.readFileSync(sql1Path, 'utf8');
-        await pool.query(sql);
+        const cleanSql = sql.replace(/^\\[^\n]*\n?/gm, '');
+        await pool.query(cleanSql);
         console.log('[API] Initial schema migrated successfully!');
       }
     }
@@ -148,7 +150,7 @@ async function start() {
 
   const healthHandler = async () => ({
     status: 'healthy',
-    version: '1.0.0',
+    version: '1.4.0',
     time: new Date().toISOString(),
   });
   fastify.get('/health', healthHandler);
@@ -171,6 +173,7 @@ async function start() {
   await fastify.register(dataPortRoutes, { prefix: '/api/data' });
   await fastify.register(companyRoutes, { prefix: '/api/company' });
   await fastify.register(searchRoutes, { prefix: '/api/search' });
+  await fastify.register(syncRoutes, { prefix: '/api/sync' });
 
   await autoEnsureSchema();
 

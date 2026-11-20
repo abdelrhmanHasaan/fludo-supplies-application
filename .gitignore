@@ -35,3 +35,4 @@ tests/screenshots_deep/
 # Installer executable (tracked separately or via GitHub Releases to prevent repo bloat)
 installer/*.exe
 installer/*.blockmap
+apps/desktop/pgsql/

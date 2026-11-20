@@ -23,7 +23,7 @@
 --      changes require a manager approval row (app.edit_approvals) -- see Part B.
 -- =============================================================================
 
-\set ON_ERROR_STOP on
+-- \set ON_ERROR_STOP on
 BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS app;

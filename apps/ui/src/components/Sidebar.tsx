@@ -118,6 +118,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentSection, onSelectSectio
           <span>قاعدة البيانات:</span>
           <span>PostgreSQL 18 (:5433)</span>
         </div>
+        <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-900">
+          <span>نسخة التطبيق:</span>
+          <span className="font-mono text-slate-400">v1.4.0 (مستقر)</span>
+        </div>
       </div>
     </aside>
   );

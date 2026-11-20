@@ -6,7 +6,7 @@ import { Navbar } from './components/Navbar';
 import { ManagerPinModal } from './components/ManagerPinModal';
 import { FirstRunWizard } from './components/FirstRunWizard';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
-import { Lock, ArrowRight, ShieldAlert, AlertCircle } from 'lucide-react';
+import { Lock, ArrowRight, ShieldAlert, AlertCircle, RefreshCw } from 'lucide-react';
 
 // Pages
 import { DashboardPage } from './pages/DashboardPage';
@@ -55,7 +55,7 @@ const MainApp: React.FC = () => {
     setCheckingSetup(true);
     setConnectionError(null);
     let attempts = 0;
-    const maxAttempts = 12;
+    const maxAttempts = 20;
 
     while (attempts < maxAttempts) {
       attempts++;
@@ -71,12 +71,12 @@ const MainApp: React.FC = () => {
         console.warn(`[App] Connection attempt ${attempts}/${maxAttempts} notice:`, err);
         if (attempts >= maxAttempts) {
           setConnectionError(
-            'تعذر الاتصال بخادم النظام وقاعدة البيانات المحلية (Port 4000 / DB 5433). يرجى التأكد من تشغيل البرنامج أو الضغط على زر إعادة المحاولة.'
+            'تعذر الاتصال بخادم النظام ومحرك قاعدة البيانات المحلية (Port 4000 / DB 5433). يرجى التأكد من تشغيل البرنامج أو الضغط على زر إعادة المحاولة أدناه.'
           );
           setCheckingSetup(false);
           return;
         }
-        await new Promise((r) => setTimeout(r, 1200));
+        await new Promise((r) => setTimeout(r, 1500));
       }
     }
   };
@@ -211,7 +211,7 @@ const MainApp: React.FC = () => {
           <div className="flex flex-col items-center gap-3">
             <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
             <span className="text-xs font-bold text-blue-600">
-              فحص الجاهزية (محاولة {retryAttempt} من 12)...
+              جاري فحص وتهيئة النظام ومحرك البيانات (محاولة {retryAttempt} من 20)...
             </span>
           </div>
         </div>
@@ -230,12 +230,16 @@ const MainApp: React.FC = () => {
           <div className="space-y-2">
             <h2 className="text-lg font-black text-slate-800">حالة الاتصال بالنظام</h2>
             <p className="text-xs text-rose-600 font-medium leading-relaxed">{connectionError}</p>
+            <p className="text-[11px] text-slate-500 leading-normal pt-1">
+              إذا كانت هذه المرة الأولى لتشغيل البرنامج بعد التثبيت، فقد يستغرق تهيئة محرك قاعدة البيانات بضع لحظات إضافية.
+            </p>
           </div>
           <button
             onClick={() => checkStatus()}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-md transition-all"
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
           >
-            إعادة المحاولة الآن
+            <RefreshCw className="w-4 h-4" />
+            <span>إعادة المحاولة الآن</span>
           </button>
         </div>
       </div>

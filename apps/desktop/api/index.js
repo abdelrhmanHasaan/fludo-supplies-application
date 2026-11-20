@@ -25,6 +25,7 @@ const audit_routes_js_1 = require("./routes/audit.routes.js");
 const data_port_routes_js_1 = require("./routes/data_port.routes.js");
 const company_routes_js_1 = require("./routes/company.routes.js");
 const search_routes_js_1 = require("./routes/search.routes.js");
+const sync_routes_js_1 = require("./routes/sync.routes.js");
 dotenv_1.default.config();
 const fastify = (0, fastify_1.default)({
     logger: false,
@@ -51,7 +52,8 @@ async function autoEnsureSchema() {
             const sql1Path = migration1Paths.find((p) => fs.existsSync(p));
             if (sql1Path) {
                 const sql = fs.readFileSync(sql1Path, 'utf8');
-                await db_js_1.pool.query(sql);
+                const cleanSql = sql.replace(/^\\[^\n]*\n?/gm, '');
+                await db_js_1.pool.query(cleanSql);
                 console.log('[API] Initial schema migrated successfully!');
             }
         }
@@ -144,7 +146,7 @@ async function start() {
     });
     const healthHandler = async () => ({
         status: 'healthy',
-        version: '1.0.0',
+        version: '1.4.0',
         time: new Date().toISOString(),
     });
     fastify.get('/health', healthHandler);
@@ -166,6 +168,7 @@ async function start() {
     await fastify.register(data_port_routes_js_1.dataPortRoutes, { prefix: '/api/data' });
     await fastify.register(company_routes_js_1.companyRoutes, { prefix: '/api/company' });
     await fastify.register(search_routes_js_1.searchRoutes, { prefix: '/api/search' });
+    await fastify.register(sync_routes_js_1.syncRoutes, { prefix: '/api/sync' });
     await autoEnsureSchema();
     const port = parseInt(process.env.PORT || '4000', 10);
     const host = '127.0.0.1';

@@ -12,6 +12,17 @@ let mainWindow: BrowserWindow | null = null;
 let apiProcess: any = null;
 let pgProcess: ChildProcess | null = null;
 
+// Persistent desktop logger
+function logDesktop(msg: string) {
+  try {
+    const logDir = path.join(app.getPath('userData'), 'logs');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const line = `[${new Date().toISOString()}] ${msg}\n`;
+    fs.appendFileSync(path.join(logDir, 'desktop.log'), line, 'utf8');
+  } catch {}
+  console.log(msg);
+}
+
 // Helper to check if a local TCP port is open
 function checkPortOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
   return new Promise((resolve) => {
@@ -49,27 +60,31 @@ function checkApiHealth(port = 4000): Promise<boolean> {
 
 // Start PostgreSQL if port 5433 is not already listening
 async function ensureDatabase() {
+  logDesktop('[DESKTOP] Checking if PostgreSQL is listening on port 5433...');
   const isDbListening = await checkPortOpen(5433);
   if (isDbListening) {
-    console.log('[DESKTOP] PostgreSQL is already listening on port 5433.');
+    logDesktop('[DESKTOP] PostgreSQL is already listening on port 5433.');
     return;
   }
 
-  // Look for PostgreSQL installation candidates
+  // Look for PostgreSQL installation candidates (Bundled portable FIRST)
   const appPath = app.getAppPath();
   const pgExeCandidates = [
+    path.join(process.resourcesPath || '', 'pgsql', 'bin', 'postgres.exe'),
+    path.join(appPath, 'pgsql', 'bin', 'postgres.exe'),
+    path.resolve(__dirname, '../pgsql/bin/postgres.exe'),
+    path.resolve(appPath, '../../data/pgsql/bin/postgres.exe'),
     'C:\\Program Files\\PostgreSQL\\18\\bin\\postgres.exe',
     'C:\\Program Files\\PostgreSQL\\17\\bin\\postgres.exe',
     'C:\\Program Files\\PostgreSQL\\16\\bin\\postgres.exe',
     'C:\\Program Files\\PostgreSQL\\15\\bin\\postgres.exe',
-    path.join(process.resourcesPath || '', 'pgsql', 'bin', 'postgres.exe'),
-    path.resolve(appPath, '../../data/pgsql/bin/postgres.exe'),
   ];
   const pgExe = pgExeCandidates.find((p) => fs.existsSync(p));
+  logDesktop(`[DESKTOP] Selected PostgreSQL binary: ${pgExe || 'NONE FOUND'}`);
 
   const pgDataCandidates = [
-    path.resolve(__dirname, '../../../data/pgdata'),
     path.join(app.getPath('userData'), 'pgdata'),
+    path.resolve(__dirname, '../../../data/pgdata'),
     path.resolve(appPath, '../../data/pgdata'),
     path.join(process.resourcesPath || '', 'data', 'pgdata'),
     'C:\\ProgramData\\FludoSuppliesERP\\pgdata',
@@ -81,14 +96,19 @@ async function ensureDatabase() {
     const binDir = path.dirname(pgExe);
     const initdbExe = path.join(binDir, 'initdb.exe');
     const targetDir = path.join(app.getPath('userData'), 'pgdata');
+    const shareDir = path.join(path.dirname(binDir), 'share');
 
     if (fs.existsSync(initdbExe)) {
-      console.log(`[DESKTOP] Initializing fresh PostgreSQL cluster at: ${targetDir}`);
+      logDesktop(`[DESKTOP] Initializing fresh PostgreSQL cluster at: ${targetDir}`);
       try {
         fs.mkdirSync(targetDir, { recursive: true });
-        execFileSync(initdbExe, ['-D', targetDir, '-U', 'erp_owner', '-A', 'trust', '-E', 'UTF8'], {
+        const initArgs = ['-D', targetDir, '-U', 'erp_owner', '-A', 'trust', '-E', 'UTF8'];
+        if (fs.existsSync(shareDir)) {
+          initArgs.push('-L', shareDir);
+        }
+        execFileSync(initdbExe, initArgs, {
           windowsHide: true,
-          stdio: 'ignore',
+          stdio: 'pipe',
         });
 
         // Configure port 5433 in postgresql.conf
@@ -96,23 +116,27 @@ async function ensureDatabase() {
         if (fs.existsSync(confPath)) {
           fs.appendFileSync(
             confPath,
-            '\nport = 5433\nlisten_addresses = \'127.0.0.1\'\nmax_connections = 100\nshared_buffers = 128MB\n'
+            "\nport = 5433\nlisten_addresses = '127.0.0.1'\nmax_connections = 100\nshared_buffers = 128MB\n"
           );
         }
         pgData = targetDir;
-        console.log('[DESKTOP] Database cluster initialized successfully.');
-      } catch (initErr) {
-        console.error('[DESKTOP] Failed to auto-initdb:', initErr);
+        logDesktop('[DESKTOP] Database cluster initialized successfully with UTF-8 & trust auth.');
+      } catch (initErr: any) {
+        logDesktop(`[DESKTOP] Failed to auto-initdb: ${initErr?.message || initErr}`);
       }
     }
   }
 
   if (pgExe && pgData) {
-    console.log(`[DESKTOP] Starting PostgreSQL engine: ${pgExe} with data: ${pgData}`);
+    logDesktop(`[DESKTOP] Starting PostgreSQL engine: ${pgExe} with data: ${pgData}`);
     try {
+      const logDir = path.join(app.getPath('userData'), 'logs');
+      if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+      const pgLogStream = fs.openSync(path.join(logDir, 'postgres.log'), 'a');
+
       pgProcess = spawn(pgExe, ['-D', pgData, '-p', '5433'], {
         detached: false,
-        stdio: 'ignore',
+        stdio: ['ignore', pgLogStream, pgLogStream],
         windowsHide: true,
       });
 
@@ -120,7 +144,7 @@ async function ensureDatabase() {
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         if (await checkPortOpen(5433)) {
-          console.log('[DESKTOP] PostgreSQL successfully listening on port 5433.');
+          logDesktop('[DESKTOP] PostgreSQL successfully listening on port 5433.');
           break;
         }
       }
@@ -128,24 +152,31 @@ async function ensureDatabase() {
       // Ensure 'fludo_erp' database exists
       const createdbExe = path.join(path.dirname(pgExe), 'createdb.exe');
       if (fs.existsSync(createdbExe)) {
-        try {
-          execFileSync(createdbExe, ['-p', '5433', '-U', 'erp_owner', '-h', '127.0.0.1', 'fludo_erp'], {
-            windowsHide: true,
-            stdio: 'ignore',
-          });
-          console.log('[DESKTOP] Database fludo_erp verified/created.');
-        } catch {
-          // Database already exists
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            execFileSync(createdbExe, ['-p', '5433', '-U', 'erp_owner', '-h', '127.0.0.1', 'fludo_erp'], {
+              windowsHide: true,
+              stdio: 'pipe',
+            });
+            logDesktop('[DESKTOP] Database fludo_erp verified/created successfully.');
+            break;
+          } catch (createErr: any) {
+            if (createErr?.message && createErr.message.includes('already exists')) {
+              logDesktop('[DESKTOP] Database fludo_erp already exists.');
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 1000));
+          }
         }
       }
-    } catch (err) {
-      console.warn('[DESKTOP] Could not auto-spawn PostgreSQL process:', err);
+    } catch (err: any) {
+      logDesktop(`[DESKTOP] Could not auto-spawn PostgreSQL process: ${err?.message || err}`);
     }
   } else {
-    console.log('[DESKTOP] Checking system PostgreSQL service on port 5433...');
+    logDesktop('[DESKTOP] Checking system PostgreSQL service on port 5433...');
     for (let i = 0; i < 30; i++) {
       if (await checkPortOpen(5433)) {
-        console.log('[DESKTOP] PostgreSQL service detected and accepting connections.');
+        logDesktop('[DESKTOP] PostgreSQL service detected and accepting connections.');
         break;
       }
       await new Promise((r) => setTimeout(r, 1000));
@@ -157,7 +188,7 @@ async function ensureDatabase() {
 async function ensureApiServer() {
   const isHealthy = await checkApiHealth(4000);
   if (isHealthy) {
-    console.log('[DESKTOP] API server is already healthy on port 4000.');
+    logDesktop('[DESKTOP] API server is already healthy on port 4000.');
     return;
   }
 
@@ -171,7 +202,7 @@ async function ensureApiServer() {
   const targetScript = apiCandidates.find((p) => fs.existsSync(p));
 
   if (targetScript) {
-    console.log(`[DESKTOP] Launching backend API from: ${targetScript}`);
+    logDesktop(`[DESKTOP] Launching backend API from: ${targetScript}`);
 
     const apiEnv = {
       ...process.env,
@@ -194,19 +225,19 @@ async function ensureApiServer() {
         });
       }
 
-      // Wait up to 30 seconds for API to be ready
-      for (let i = 0; i < 30; i++) {
+      // Wait up to 45 seconds for API to be ready
+      for (let i = 0; i < 45; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         if (await checkApiHealth(4000)) {
-          console.log('[DESKTOP] Backend API is ready on port 4000.');
+          logDesktop('[DESKTOP] Backend API is ready and healthy on port 4000.');
           break;
         }
       }
-    } catch (err) {
-      console.error('[DESKTOP] Failed to fork backend API:', err);
+    } catch (err: any) {
+      logDesktop(`[DESKTOP] Failed to fork backend API: ${err?.message || err}`);
     }
   } else {
-    console.warn('[DESKTOP] API script bundle not found in candidate paths.');
+    logDesktop('[DESKTOP] API script bundle not found in candidate paths.');
   }
 }
 

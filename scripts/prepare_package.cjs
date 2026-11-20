@@ -72,4 +72,32 @@ if (fs.existsSync(sqlMigration2)) {
   console.log('  ✓ 0002 SQL schema migration copied to desktop package.');
 }
 
+// Ensure PostgreSQL Portable Runtime is staged in apps/desktop/pgsql
+const pgsqlDest = path.join(rootDir, 'apps', 'desktop', 'pgsql');
+const pgsqlDestExe = path.join(pgsqlDest, 'bin', 'postgres.exe');
+if (fs.existsSync(pgsqlDestExe)) {
+  console.log('  ✓ Bundled PostgreSQL portable runtime already staged at:', pgsqlDest);
+} else {
+  console.log('[PREPARE] Staging PostgreSQL portable runtime...');
+  const pgSourceCandidates = [
+    'C:\\Program Files\\PostgreSQL\\18',
+    'C:\\Program Files\\PostgreSQL\\17',
+    'C:\\Program Files\\PostgreSQL\\16',
+    'C:\\Program Files\\PostgreSQL\\15',
+  ];
+  const pgSource = pgSourceCandidates.find((s) => fs.existsSync(path.join(s, 'bin', 'postgres.exe')));
+  if (pgSource) {
+    console.log('  Copying PostgreSQL from:', pgSource);
+    // 1. bin (exclude unnecessary GUI/wx tools)
+    copyDirSync(path.join(pgSource, 'bin'), path.join(pgsqlDest, 'bin'));
+    // 2. lib
+    copyDirSync(path.join(pgSource, 'lib'), path.join(pgsqlDest, 'lib'));
+    // 3. share
+    copyDirSync(path.join(pgSource, 'share'), path.join(pgsqlDest, 'share'));
+    console.log('  ✓ Bundled PostgreSQL portable runtime staged successfully.');
+  } else {
+    console.warn('  ⚠ No local PostgreSQL source installation found to bundle.');
+  }
+}
+
 console.log('[PREPARE] Packaging staging completed successfully.');

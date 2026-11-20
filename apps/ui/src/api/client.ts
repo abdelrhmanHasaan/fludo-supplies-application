@@ -169,4 +169,24 @@ export const api = {
   updateCompanyAndManager: (data: any) => apiFetch<any>('/company/manage', { method: 'PUT', body: JSON.stringify(data) }),
   smartDelete: (type: string, id: string, pin: string) => apiFetch<any>('/company/delete-item', { method: 'POST', body: JSON.stringify({ type, id, pin }) }),
   resetOperationalData: (pin: string) => apiFetch<any>('/company/reset-movements', { method: 'POST', body: JSON.stringify({ pin }) }),
+
+  // Cloud Sync
+  getSyncStatus: () => apiFetch<{
+    enabled: boolean;
+    serverUrl: string;
+    lastSuccessAt: string | null;
+    lastError: string | null;
+    lastPushedId: number;
+    pendingCount: number;
+    totalCount: number;
+    tenantId: string;
+  }>('/sync/status'),
+  saveSyncConfig: (data: { serverUrl: string; enabled: boolean; tenantToken?: string }) =>
+    apiFetch<{ success: boolean; message: string }>('/sync/config', { method: 'POST', body: JSON.stringify(data) }),
+  testSyncConnection: (serverUrl: string) =>
+    apiFetch<{ success: boolean; message: string }>('/sync/test', { method: 'POST', body: JSON.stringify({ serverUrl }) }),
+  triggerSync: () =>
+    apiFetch<{ success: boolean; message: string; pushedCount: number }>('/sync/trigger', { method: 'POST' }),
+  enqueueAllForSync: () =>
+    apiFetch<{ success: boolean; message: string; enqueuedCount: number }>('/sync/enqueue-all', { method: 'POST' }),
 };
