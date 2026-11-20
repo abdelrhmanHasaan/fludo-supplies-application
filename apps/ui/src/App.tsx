@@ -6,7 +6,7 @@ import { Navbar } from './components/Navbar';
 import { ManagerPinModal } from './components/ManagerPinModal';
 import { FirstRunWizard } from './components/FirstRunWizard';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
-import { Lock, ArrowRight, ShieldAlert } from 'lucide-react';
+import { Lock, ArrowRight, ShieldAlert, AlertCircle } from 'lucide-react';
 
 // Pages
 import { DashboardPage } from './pages/DashboardPage';
@@ -36,6 +36,8 @@ const MainApp: React.FC = () => {
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [checkingSetup, setCheckingSetup] = useState(true);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [retryAttempt, setRetryAttempt] = useState(1);
 
   // Login form state (strictly clean without any default credentials)
   const [loginUser, setLoginUser] = useState('');
@@ -49,20 +51,38 @@ const MainApp: React.FC = () => {
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [unlockLoading, setUnlockLoading] = useState(false);
 
-  // 1. Initial Setup Status Check
-  useEffect(() => {
-    async function checkStatus() {
+  // 1. Initial Setup Status Check with Auto-Retry Loop
+  const checkStatus = async () => {
+    setCheckingSetup(true);
+    setConnectionError(null);
+    let attempts = 0;
+    const maxAttempts = 12;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      setRetryAttempt(attempts);
       try {
         const res = await api.getAuthStatus();
         if (!res.initialized) {
           setShowSetupWizard(true);
         }
-      } catch (err) {
-        console.warn('Could not check setup status:', err);
-      } finally {
         setCheckingSetup(false);
+        return;
+      } catch (err: any) {
+        console.warn(`[App] Connection attempt ${attempts}/${maxAttempts} notice:`, err);
+        if (attempts >= maxAttempts) {
+          setConnectionError(
+            'تعذر الاتصال بخادم النظام وقاعدة البيانات المحلية (Port 4000 / DB 5433). يرجى التأكد من تشغيل البرنامج أو الضغط على زر إعادة المحاولة.'
+          );
+          setCheckingSetup(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1200));
       }
     }
+  };
+
+  useEffect(() => {
     checkStatus();
   }, []);
 
@@ -135,7 +155,12 @@ const MainApp: React.FC = () => {
       setUser(res.user);
       setIsLocked(false);
     } catch (err: any) {
-      setLoginError(err.message || 'اسم المستخدم أو كلمة المرور غير صحيحة');
+      const msg = err.message || '';
+      if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network')) {
+        setLoginError('تعذر الاتصال بخادم النظام المحلي (Port 4000). يرجى التأكد من تشغيل البرنامج أو الضغط على إعادة المحاولة.');
+      } else {
+        setLoginError(msg || 'اسم المستخدم أو كلمة المرور غير صحيحة');
+      }
     } finally {
       setLoginLoading(false);
     }
@@ -170,11 +195,61 @@ const MainApp: React.FC = () => {
     setUser(newUser);
   };
 
+  // If checking initial server connectivity
+  if (checkingSetup) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 p-8 text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-blue-600 flex items-center justify-center text-white font-black text-3xl mx-auto shadow-lg shadow-blue-500/30">
+            {logoLetter}
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-black text-slate-800">{company.name_ar || 'نظام التوريدات ERP'}</h2>
+            <p className="text-xs text-slate-500">جاري فحص وتجهيز النظام المحلي وقاعدة البيانات...</p>
+          </div>
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-xs font-bold text-blue-600">
+              فحص الجاهزية (محاولة {retryAttempt} من 12)...
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If connection error
+  if (connectionError && !token) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 p-8 text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-md">
+            <AlertCircle className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-lg font-black text-slate-800">حالة الاتصال بالنظام</h2>
+            <p className="text-xs text-rose-600 font-medium leading-relaxed">{connectionError}</p>
+          </div>
+          <button
+            onClick={() => checkStatus()}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-md transition-all"
+          >
+            إعادة المحاولة الآن
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // If first-run setup wizard is active
   if (showSetupWizard) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <FirstRunWizard isOpen={true} onSuccess={handleSetupSuccess} />
+        <FirstRunWizard
+          isOpen={true}
+          onSuccess={handleSetupSuccess}
+          onClose={() => setShowSetupWizard(false)}
+        />
       </div>
     );
   }
@@ -232,6 +307,16 @@ const MainApp: React.FC = () => {
             >
               {loginLoading ? 'جاري التحقق...' : 'تسجيل الدخول للنظام'}
             </button>
+
+            <div className="pt-3 border-t border-slate-100 text-center">
+              <button
+                type="button"
+                onClick={() => setShowSetupWizard(true)}
+                className="text-xs text-blue-600 hover:text-blue-800 font-bold hover:underline"
+              >
+                إنشاء أو إعادة تهيئة حساب مدير جديد (Setup Wizard)
+              </button>
+            </div>
           </form>
         </div>
       </div>

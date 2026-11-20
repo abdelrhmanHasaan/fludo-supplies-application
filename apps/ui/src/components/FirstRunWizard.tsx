@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { api, setStoredToken } from '../api/client';
-import { Building2, ShieldCheck, CheckCircle, Sparkles, Lock, KeyRound, User } from 'lucide-react';
+import { Building2, ShieldCheck, CheckCircle, Sparkles, Lock, KeyRound, User, X } from 'lucide-react';
 
 interface FirstRunWizardProps {
   isOpen: boolean;
   onSuccess: (token: string, user: any) => void;
+  onClose?: () => void;
 }
 
-export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSuccess }) => {
+export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSuccess, onClose }) => {
   const [companyName, setCompanyName] = useState('شركة الرضا للتوريدات');
   const [adminFullName, setAdminFullName] = useState('');
   const [username, setUsername] = useState('');
@@ -81,6 +82,16 @@ export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSucces
       <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden animate-in fade-in zoom-in duration-200">
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 text-white p-7 text-center space-y-2 relative">
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="absolute top-4 left-4 p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors"
+              title="إغلاق والعودة لشاشة الدخول"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
           <div className="w-12 h-12 rounded-2xl bg-blue-600/40 border border-blue-400/30 flex items-center justify-center mx-auto shadow-lg">
             <Sparkles className="w-6 h-6 text-amber-300" />
           </div>

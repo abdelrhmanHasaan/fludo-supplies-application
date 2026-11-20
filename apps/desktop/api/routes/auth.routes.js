@@ -6,19 +6,21 @@ const security_js_1 = require("../utils/security.js");
 const authRoutes = async (fastify) => {
     // Check system setup status (does any active user exist?)
     fastify.get('/status', async () => {
-        const res = await db_js_1.pool.query(`SELECT count(*)::int AS count FROM app.users WHERE NOT is_deleted`);
+        const res = await db_js_1.pool.query(`SELECT count(*)::int AS count FROM app.users WHERE NOT is_deleted AND last_login_at IS NOT NULL`);
         const count = res.rows[0]?.count || 0;
+        const totalRes = await db_js_1.pool.query(`SELECT count(*)::int AS count FROM app.users WHERE NOT is_deleted`);
+        const totalCount = totalRes.rows[0]?.count || 0;
         return {
             initialized: count > 0,
-            userCount: count,
+            userCount: totalCount,
         };
     });
     // First-run setup wizard: create initial admin & company profile
     fastify.post('/setup', async (req, reply) => {
         const { companyName, adminFullName, username, password, managerPin } = req.body;
-        // Check if system is already initialized
-        const checkUsers = await db_js_1.pool.query(`SELECT count(*)::int AS count FROM app.users WHERE NOT is_deleted`);
-        if (checkUsers.rows[0]?.count > 0) {
+        // Check if system is already initialized with an active logged-in user
+        const checkUsers = await db_js_1.pool.query(`SELECT count(*)::int AS count FROM app.users WHERE NOT is_deleted AND last_login_at IS NOT NULL`);
+        if ((checkUsers.rows[0]?.count || 0) > 0) {
             return reply.status(403).send({ error: 'تم تهيئة النظام مسبقاً، يرجى تسجيل الدخول' });
         }
         if (!companyName || !companyName.trim()) {
@@ -45,6 +47,9 @@ const authRoutes = async (fastify) => {
         const result = await (0, db_js_1.withTransaction)(async (client) => {
             // 1. Update company / tenant name if tenant exists
             await client.query(`UPDATE app.tenants SET name = $1, updated_at = NOW()`, [cleanCompanyName]);
+            await client.query(`UPDATE app.company_profile SET name_ar = $1, updated_at = NOW()`, [cleanCompanyName]);
+            // Clean up any unauthenticated placeholder users
+            await client.query(`DELETE FROM app.users WHERE last_login_at IS NULL`);
             // 2. Ensure admin role exists
             let roleRes = await client.query(`SELECT id FROM app.roles WHERE code = 'admin'`);
             let roleId = roleRes.rows[0]?.id;
@@ -57,8 +62,8 @@ const authRoutes = async (fastify) => {
             // 3. Create administrator user
             const userRes = await client.query(`INSERT INTO app.users (
           username, full_name, password_hash, manager_pin_hash, 
-          is_active, must_change_password, failed_attempts
-        ) VALUES ($1, $2, $3, $4, true, false, 0)
+          is_active, must_change_password, failed_attempts, last_login_at
+        ) VALUES ($1, $2, $3, $4, true, false, 0, NOW())
         RETURNING id, username, full_name`, [cleanUsername, cleanFullName, passwordHash, pinHash]);
             const user = userRes.rows[0];
             // 4. Assign admin role

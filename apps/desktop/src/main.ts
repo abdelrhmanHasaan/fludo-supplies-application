@@ -6,7 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
-import { spawn, ChildProcess } from 'node:child_process';
+import { spawn, execFileSync, ChildProcess } from 'node:child_process';
 
 let mainWindow: BrowserWindow | null = null;
 let apiProcess: any = null;
@@ -59,7 +59,9 @@ async function ensureDatabase() {
   const appPath = app.getAppPath();
   const pgExeCandidates = [
     'C:\\Program Files\\PostgreSQL\\18\\bin\\postgres.exe',
+    'C:\\Program Files\\PostgreSQL\\17\\bin\\postgres.exe',
     'C:\\Program Files\\PostgreSQL\\16\\bin\\postgres.exe',
+    'C:\\Program Files\\PostgreSQL\\15\\bin\\postgres.exe',
     path.join(process.resourcesPath || '', 'pgsql', 'bin', 'postgres.exe'),
     path.resolve(appPath, '../../data/pgsql/bin/postgres.exe'),
   ];
@@ -67,11 +69,43 @@ async function ensureDatabase() {
 
   const pgDataCandidates = [
     path.resolve(__dirname, '../../../data/pgdata'),
+    path.join(app.getPath('userData'), 'pgdata'),
     path.resolve(appPath, '../../data/pgdata'),
     path.join(process.resourcesPath || '', 'data', 'pgdata'),
     'C:\\ProgramData\\FludoSuppliesERP\\pgdata',
   ];
-  const pgData = pgDataCandidates.find((p) => fs.existsSync(p));
+  let pgData = pgDataCandidates.find((p) => fs.existsSync(path.join(p, 'PG_VERSION')));
+
+  // Self-heal: If no existing cluster exists, initialize one automatically with initdb.exe!
+  if (pgExe && !pgData) {
+    const binDir = path.dirname(pgExe);
+    const initdbExe = path.join(binDir, 'initdb.exe');
+    const targetDir = path.join(app.getPath('userData'), 'pgdata');
+
+    if (fs.existsSync(initdbExe)) {
+      console.log(`[DESKTOP] Initializing fresh PostgreSQL cluster at: ${targetDir}`);
+      try {
+        fs.mkdirSync(targetDir, { recursive: true });
+        execFileSync(initdbExe, ['-D', targetDir, '-U', 'erp_owner', '-A', 'trust', '-E', 'UTF8'], {
+          windowsHide: true,
+          stdio: 'ignore',
+        });
+
+        // Configure port 5433 in postgresql.conf
+        const confPath = path.join(targetDir, 'postgresql.conf');
+        if (fs.existsSync(confPath)) {
+          fs.appendFileSync(
+            confPath,
+            '\nport = 5433\nlisten_addresses = \'127.0.0.1\'\nmax_connections = 100\nshared_buffers = 128MB\n'
+          );
+        }
+        pgData = targetDir;
+        console.log('[DESKTOP] Database cluster initialized successfully.');
+      } catch (initErr) {
+        console.error('[DESKTOP] Failed to auto-initdb:', initErr);
+      }
+    }
+  }
 
   if (pgExe && pgData) {
     console.log(`[DESKTOP] Starting PostgreSQL engine: ${pgExe} with data: ${pgData}`);
@@ -88,6 +122,20 @@ async function ensureDatabase() {
         if (await checkPortOpen(5433)) {
           console.log('[DESKTOP] PostgreSQL successfully listening on port 5433.');
           break;
+        }
+      }
+
+      // Ensure 'fludo_erp' database exists
+      const createdbExe = path.join(path.dirname(pgExe), 'createdb.exe');
+      if (fs.existsSync(createdbExe)) {
+        try {
+          execFileSync(createdbExe, ['-p', '5433', '-U', 'erp_owner', '-h', '127.0.0.1', 'fludo_erp'], {
+            windowsHide: true,
+            stdio: 'ignore',
+          });
+          console.log('[DESKTOP] Database fludo_erp verified/created.');
+        } catch {
+          // Database already exists
         }
       }
     } catch (err) {
