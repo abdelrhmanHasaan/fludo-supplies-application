@@ -131,12 +131,10 @@ async function runPlaywrightSuite() {
       }
     });
 
-    // 4. Authentication Flow
+    // 4. Authentication Flow (Single Password / PIN Unlock)
     await step('4. Authenticate as Admin & Enter Dashboard', async () => {
-      const userField = await page.$('input[placeholder="أدخل اسم المستخدم"]');
-      if (userField) {
-        await userField.fill('admin');
-        const passField = await page.$('input[placeholder="أدخل كلمة المرور"]');
+      const passField = await page.$('input[placeholder*="كلمة المرور"]');
+      if (passField) {
         const defaultSecret = Buffer.from('YWRtaW4xMjM0NTY=', 'base64').toString();
         await passField.fill(process.env.ERP_TEST_PASSWORD || defaultSecret);
 

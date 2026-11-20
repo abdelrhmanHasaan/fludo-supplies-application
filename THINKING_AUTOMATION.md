@@ -7,13 +7,12 @@
 ## 1. Current State & Memory Snapshot
 
 * **System Identity:** Antigravity Autonomous Lead Architect & Senior Fullstack Engineer.
-* **Current Phase:** All Core Phases & User Customization Milestones 100% COMPLETE & VERIFIED.
+* **Current Phase:** Version 1.2.0 RELEASED & VERIFIED (Password-Only Fast Login + Streamlined Setup Wizard + Playwright 10/10 + Production Windows Installer).
 * **Active Goal:** Build, test, package, and publish the complete enterprise-grade, offline-first Windows ERP for Building-Materials Yard (Fludo ERP), featuring:
+  - Version 1.2.0: Single-field password/PIN unlock screen with zero username prompt.
+  - Streamlined First-Run Wizard: Prompts for Company Name, Manager Full Name, Password (>=12 chars with strength meter), and 4-digit PIN.
   - 14 full business workflow modules.
-  - Dynamic company & admin onboarding wizard (`FirstRunWizard.tsx` & `CompanyContext.tsx`).
-  - Revamped executive Main Menu with direct cards and live KPIs.
-  - Universal Excel & SQL data portability (tested with both legacy workbook and standard tabular files).
-  - Standalone Windows `.exe` setup installer.
+  - Standalone Windows `.exe` setup installer (`installer/Fludo Supplies ERP Setup 1.2.0.exe`).
   - Remote GitHub synchronization with `https://github.com/abdelrhmanHasaan/fludo-supplies-application.git`.
 * **Safety Mandate:** The attached client database `database.sql` is strictly preserved untouched. Isolated PostgreSQL runs on port 5433 with full schema and seed data.
 * **Automated UI Testing Results:**

@@ -39,8 +39,7 @@ const MainApp: React.FC = () => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [retryAttempt, setRetryAttempt] = useState(1);
 
-  // Login form state (strictly clean without any default credentials)
-  const [loginUser, setLoginUser] = useState('');
+  // Login form state (strictly clean single password input)
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -149,7 +148,7 @@ const MainApp: React.FC = () => {
     setLoginLoading(true);
     setLoginError(null);
     try {
-      const res = await api.login({ username: loginUser.trim(), password: loginPass });
+      const res = await api.login({ password: loginPass });
       setStoredToken(res.token);
       setToken(res.token);
       setUser(res.user);
@@ -159,7 +158,7 @@ const MainApp: React.FC = () => {
       if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network')) {
         setLoginError('تعذر الاتصال بخادم النظام المحلي (Port 4000). يرجى التأكد من تشغيل البرنامج أو الضغط على إعادة المحاولة.');
       } else {
-        setLoginError(msg || 'اسم المستخدم أو كلمة المرور غير صحيحة');
+        setLoginError(msg || 'كلمة المرور غير صحيحة');
       }
     } finally {
       setLoginLoading(false);
@@ -277,25 +276,20 @@ const MainApp: React.FC = () => {
             )}
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">اسم المستخدم</label>
-              <input
-                type="text"
-                value={loginUser}
-                onChange={(e) => setLoginUser(e.target.value)}
-                placeholder="أدخل اسم المستخدم"
-                className="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">كلمة المرور</label>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-blue-600" />
+                  <span>كلمة المرور أو رمز PIN للدخول</span>
+                </span>
+                <span className="text-[10px] text-slate-400">حساب الإدارة والتشغيل</span>
+              </label>
               <input
                 type="password"
+                autoFocus
                 value={loginPass}
                 onChange={(e) => setLoginPass(e.target.value)}
-                placeholder="أدخل كلمة المرور"
-                className="w-full border border-slate-300 rounded-xl p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                placeholder="أدخل كلمة المرور أو رمز PIN للدخول"
+                className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-sm font-mono text-center tracking-wider text-base"
                 required
               />
             </div>
@@ -303,7 +297,7 @@ const MainApp: React.FC = () => {
             <button
               type="submit"
               disabled={loginLoading}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-600/20 transition-all disabled:opacity-50"
+              className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-600/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {loginLoading ? 'جاري التحقق...' : 'تسجيل الدخول للنظام'}
             </button>
@@ -314,7 +308,7 @@ const MainApp: React.FC = () => {
                 onClick={() => setShowSetupWizard(true)}
                 className="text-xs text-blue-600 hover:text-blue-800 font-bold hover:underline"
               >
-                إنشاء أو إعادة تهيئة حساب مدير جديد (Setup Wizard)
+                إعداد وتعيين كلمة المرور للمرة الأولى (Setup Wizard)
               </button>
             </div>
           </form>

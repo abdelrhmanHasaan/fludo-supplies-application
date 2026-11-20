@@ -11,7 +11,6 @@ interface FirstRunWizardProps {
 export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSuccess, onClose }) => {
   const [companyName, setCompanyName] = useState('شركة الرضا للتوريدات');
   const [adminFullName, setAdminFullName] = useState('');
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [managerPin, setManagerPin] = useState('');
   const [loading, setLoading] = useState(false);
@@ -46,10 +45,7 @@ export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSucces
       return setError('يرجى كتابة اسم الشركة أو المؤسسة');
     }
     if (!adminFullName.trim()) {
-      return setError('يرجى كتابة الاسم الكامل للمدير');
-    }
-    if (!username.trim() || username.trim().length < 3) {
-      return setError('اسم مستخدم المدير يجب ألا يقل عن 3 أحرف');
+      return setError('يرجى كتابة اسم المسؤول أو المدير');
     }
     if (password.length < 12) {
       return setError('كلمة المرور يجب ألا تقل عن 12 حرفاً وفقاً لمعايير الأمان');
@@ -63,7 +59,7 @@ export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSucces
       const res = await api.setupAdmin({
         companyName: companyName.trim(),
         adminFullName: adminFullName.trim(),
-        username: username.trim(),
+        username: 'admin',
         password,
         managerPin: managerPin.trim(),
       });
@@ -125,38 +121,20 @@ export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSucces
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Admin Full Name */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                <User className="w-4 h-4 text-slate-500" />
-                <span>الاسم الكامل للمدير *</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={adminFullName}
-                onChange={(e) => setAdminFullName(e.target.value)}
-                placeholder="مثال: محمد رضا"
-                className="w-full px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-              />
-            </div>
-
-            {/* Username */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-slate-500" />
-                <span>اسم مستخدم الدخول *</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="اسم المستخدم (3 أحرف فأكثر)"
-                className="w-full px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono"
-              />
-            </div>
+          {/* Admin Full Name */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+              <User className="w-4 h-4 text-slate-500" />
+              <span>اسم المسؤول / مدير النظام *</span>
+            </label>
+            <input
+              type="text"
+              required
+              value={adminFullName}
+              onChange={(e) => setAdminFullName(e.target.value)}
+              placeholder="مثال: محمد رضا"
+              className="w-full px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+            />
           </div>
 
           {/* Password with strength meter */}
