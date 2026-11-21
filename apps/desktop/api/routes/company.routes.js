@@ -147,7 +147,6 @@ const companyRoutes = async (fastify) => {
              address = COALESCE($4, address),
              phones = COALESCE($5, phones),
              updated_at = NOW()`, [name_ar.trim(), name_en?.trim() || null, tagline?.trim() || null, address?.trim() || null, phones?.trim() || null]);
-                await client.query(`UPDATE app.tenants SET name = $1, updated_at = NOW()`, [name_ar.trim()]);
                 // B. Update manager credentials if requested
                 const adminRes = await client.query(`SELECT u.* FROM app.users u
            LEFT JOIN app.user_roles ur ON ur.user_id = u.id

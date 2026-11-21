@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { api, getStoredToken } from '../api/client';
+import { api, getStoredToken, getApiBase } from '../api/client';
 import {
   Database,
   FileSpreadsheet,
@@ -38,7 +38,7 @@ export const DataPortPage: React.FC = () => {
     setErrorMessage(null);
     try {
       const token = getStoredToken();
-      const res = await fetch(`http://127.0.0.1:4000/api/data/${endpoint}`, {
+      const res = await fetch(`${getApiBase()}/data/${endpoint}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) {

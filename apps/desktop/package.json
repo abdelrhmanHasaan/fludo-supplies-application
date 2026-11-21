@@ -19,6 +19,8 @@
     "directories": {
       "output": "release"
     },
+    "npmRebuild": false,
+    "asar": false,
     "files": [
       "dist/**/*",
       "ui/**/*",
@@ -52,6 +54,7 @@
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
@@ -59,8 +62,10 @@
     }
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.17",
     "@fastify/cors": "^10.0.2",
     "@fastify/multipart": "^9.0.3",
+    "argon2": "^0.45.2",
     "dotenv": "^16.4.7",
     "exceljs": "^4.4.0",
     "fastify": "^5.2.1",

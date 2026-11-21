@@ -201,7 +201,6 @@ export const companyRoutes: FastifyPluginAsync = async (fastify) => {
              updated_at = NOW()`,
           [name_ar.trim(), name_en?.trim() || null, tagline?.trim() || null, address?.trim() || null, phones?.trim() || null]
         );
-        await client.query(`UPDATE app.tenants SET name = $1, updated_at = NOW()`, [name_ar.trim()]);
 
         // B. Update manager credentials if requested
         const adminRes = await client.query(

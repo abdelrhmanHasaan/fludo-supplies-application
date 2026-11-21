@@ -151,6 +151,19 @@ async function start() {
     });
     fastify.get('/health', healthHandler);
     fastify.get('/api/health', healthHandler);
+    // Per-launch secret token validation (Requirement 3)
+    const appSecretToken = process.env.APP_SECRET_TOKEN;
+    if (appSecretToken) {
+        fastify.addHook('onRequest', async (req, reply) => {
+            if (req.method === 'OPTIONS' || req.url === '/health' || req.url === '/api/health') {
+                return;
+            }
+            const token = req.headers['x-app-token'];
+            if (!token || token !== appSecretToken) {
+                return reply.status(401).send({ error: 'غير مصرح: رمز الجلسة غير صالح أو مفقود' });
+            }
+        });
+    }
     await fastify.register(auth_routes_js_1.authRoutes, { prefix: '/api/auth' });
     await fastify.register(parties_routes_js_1.partiesRoutes, { prefix: '/api/parties' });
     await fastify.register(products_routes_js_1.productsRoutes, { prefix: '/api/products' });

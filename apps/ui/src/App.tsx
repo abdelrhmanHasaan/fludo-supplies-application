@@ -6,7 +6,7 @@ import { Navbar } from './components/Navbar';
 import { ManagerPinModal } from './components/ManagerPinModal';
 import { FirstRunWizard } from './components/FirstRunWizard';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
-import { Lock, ArrowRight, ShieldAlert, AlertCircle, RefreshCw } from 'lucide-react';
+import { Lock, ArrowRight, ShieldAlert, AlertCircle, RefreshCw, FolderOpen, Download, Terminal } from 'lucide-react';
 
 // Pages
 import { DashboardPage } from './pages/DashboardPage';
@@ -38,6 +38,9 @@ const MainApp: React.FC = () => {
   const [checkingSetup, setCheckingSetup] = useState(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [retryAttempt, setRetryAttempt] = useState(1);
+  const [startupStep, setStartupStep] = useState<string>('جاري تجهيز محرك البيانات الآمن وبدء تشغيل النظام...');
+  const [startupErrorDetails, setStartupErrorDetails] = useState<{ step?: string; error?: string; logsPath?: string } | null>(null);
+  const [diagExportMsg, setDiagExportMsg] = useState<string | null>(null);
 
   // Login form state (strictly clean single password input)
   const [loginPass, setLoginPass] = useState('');
@@ -54,6 +57,8 @@ const MainApp: React.FC = () => {
   const checkStatus = async () => {
     setCheckingSetup(true);
     setConnectionError(null);
+    setStartupErrorDetails(null);
+    setDiagExportMsg(null);
     let attempts = 0;
     const maxAttempts = 20;
 
@@ -71,7 +76,7 @@ const MainApp: React.FC = () => {
         console.warn(`[App] Connection attempt ${attempts}/${maxAttempts} notice:`, err);
         if (attempts >= maxAttempts) {
           setConnectionError(
-            'تعذر الاتصال بخادم النظام ومحرك قاعدة البيانات المحلية (Port 4000 / DB 5433). يرجى التأكد من تشغيل البرنامج أو الضغط على زر إعادة المحاولة أدناه.'
+            'تعذر الاتصال بخادم النظام وقاعدة البيانات المحلية. يرجى مراجعة سجلات النظام أو إعادة المحاولة.'
           );
           setCheckingSetup(false);
           return;
@@ -82,6 +87,21 @@ const MainApp: React.FC = () => {
   };
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).electronAPI) {
+      const eApi = (window as any).electronAPI;
+      if (eApi.onStartupProgress) {
+        eApi.onStartupProgress((data: any) => {
+          if (data?.message) setStartupStep(data.message);
+        });
+      }
+      if (eApi.onStartupError) {
+        eApi.onStartupError((err: any) => {
+          setStartupErrorDetails(err);
+          setConnectionError(err.error || err.message || 'تعذر استكمال تشغيل النظام');
+          setCheckingSetup(false);
+        });
+      }
+    }
     checkStatus();
   }, []);
 
@@ -158,7 +178,7 @@ const MainApp: React.FC = () => {
     } catch (err: any) {
       const msg = err.message || '';
       if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network')) {
-        setLoginError('تعذر الاتصال بخادم النظام المحلي (Port 4000). يرجى التأكد من تشغيل البرنامج أو الضغط على إعادة المحاولة.');
+        setLoginError('تعذر الاتصال بخادم النظام ومحرك قاعدة البيانات المحلية. يرجى التأكد من تشغيل البرنامج أو الضغط على إعادة المحاولة.');
       } else {
         setLoginError(msg || 'كلمة المرور غير صحيحة');
       }
@@ -211,7 +231,7 @@ const MainApp: React.FC = () => {
           <div className="flex flex-col items-center gap-3">
             <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
             <span className="text-xs font-bold text-blue-600">
-              جاري فحص وتهيئة النظام ومحرك البيانات (محاولة {retryAttempt} من 20)...
+              {startupStep} (محاولة {retryAttempt} من 20)
             </span>
           </div>
         </div>
@@ -219,28 +239,87 @@ const MainApp: React.FC = () => {
     );
   }
 
-  // If connection error
+  // If connection or startup error
   if (connectionError && !token) {
+    const handleRetry = () => {
+      if ((window as any).electronAPI?.retryStartup) {
+        (window as any).electronAPI.retryStartup();
+      }
+      checkStatus();
+    };
+
+    const handleOpenLogs = () => {
+      if ((window as any).electronAPI?.openLogsFolder) {
+        (window as any).electronAPI.openLogsFolder();
+      }
+    };
+
+    const handleExportDiag = async () => {
+      if ((window as any).electronAPI?.exportDiagnostics) {
+        const res = await (window as any).electronAPI.exportDiagnostics();
+        if (res?.path) {
+          setDiagExportMsg(`تم تصدير حزمة التشخيص إلى: ${res.path}`);
+        }
+      }
+    };
+
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 p-8 text-center space-y-6">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 p-8 text-center space-y-5 animate-in fade-in duration-200">
           <div className="w-16 h-16 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto shadow-md">
             <AlertCircle className="w-8 h-8" />
           </div>
+
           <div className="space-y-2">
-            <h2 className="text-lg font-black text-slate-800">حالة الاتصال بالنظام</h2>
-            <p className="text-xs text-rose-600 font-medium leading-relaxed">{connectionError}</p>
+            <h2 className="text-lg font-black text-slate-800">حالة تشغيل خادم ومحرك النظام</h2>
+            {startupErrorDetails?.step && (
+              <div className="inline-block px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs font-bold">
+                الخطوة: {startupErrorDetails.step}
+              </div>
+            )}
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-medium text-right leading-relaxed font-mono select-all">
+              {connectionError}
+            </div>
             <p className="text-[11px] text-slate-500 leading-normal pt-1">
-              إذا كانت هذه المرة الأولى لتشغيل البرنامج بعد التثبيت، فقد يستغرق تهيئة محرك قاعدة البيانات بضع لحظات إضافية.
+              مسار سجلات النظام الآمن: <code className="font-mono text-[10px] text-slate-700 bg-slate-100 px-1 py-0.5 rounded">{startupErrorDetails?.logsPath || 'C:\\ProgramData\\FludoSuppliesERP\\logs'}</code>
             </p>
           </div>
-          <button
-            onClick={() => checkStatus()}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span>إعادة المحاولة الآن</span>
-          </button>
+
+          {diagExportMsg && (
+            <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold">
+              {diagExportMsg}
+            </div>
+          )}
+
+          <div className="space-y-2 pt-2">
+            <button
+              onClick={handleRetry}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>إعادة المحاولة الآن</span>
+            </button>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={handleOpenLogs}
+                className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5"
+              >
+                <FolderOpen className="w-4 h-4 text-slate-600" />
+                <span>فتح مجلد السجلات</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportDiag}
+                className="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5"
+              >
+                <Download className="w-4 h-4 text-slate-600" />
+                <span>تصدير التشخيص</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );

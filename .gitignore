@@ -25,14 +25,18 @@ Thumbs.db
 [Dd]esktop.ini
 .DS_Store
 
-# Temporary test exports and screenshots
+# Temporary test exports, databases and screenshots
 test_*.xlsx
 test_*.sql
 output/
 tests/screenshots_deep/
+tests/test_pglite_data/
+tests/test_wrapper_db/
+tests/vm_simulation_screenshots/
+data/pglite_db/
+data/test_wrapper_db/
 *.xlsx
 
-# Installer executable (tracked separately or via GitHub Releases to prevent repo bloat)
-installer/*.exe
+# Installer executable (tracked via Git LFS)
 installer/*.blockmap
 apps/desktop/pgsql/

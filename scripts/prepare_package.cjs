@@ -100,4 +100,18 @@ if (fs.existsSync(pgsqlDestExe)) {
   }
 }
 
+// Ensure VC++ 2015-2022 runtime DLLs are copied to pgsql/bin
+const vcDlls = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll'];
+const sys32Dir = 'C:\\Windows\\System32';
+const targetPgBin = path.join(pgsqlDest, 'bin');
+if (fs.existsSync(targetPgBin)) {
+  for (const dll of vcDlls) {
+    const src = path.join(sys32Dir, dll);
+    const dst = path.join(targetPgBin, dll);
+    if (fs.existsSync(src) && !fs.existsSync(dst)) {
+      fs.copyFileSync(src, dst);
+    }
+  }
+}
+
 console.log('[PREPARE] Packaging staging completed successfully.');

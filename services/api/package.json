@@ -10,6 +10,7 @@
     "test": "tsx test/index.test.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.17",
     "@fastify/cors": "^10.0.2",
     "@fastify/multipart": "^9.0.3",
     "argon2": "^0.45.2",

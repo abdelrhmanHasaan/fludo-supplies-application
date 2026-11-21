@@ -1,33 +1,119 @@
 // Ensure ELECTRON_RUN_AS_NODE is deleted from environment
 delete process.env.ELECTRON_RUN_AS_NODE;
 
-import { app, BrowserWindow, ipcMain, utilityProcess } from 'electron';
+import { app, BrowserWindow, ipcMain, utilityProcess, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
-import { spawn, execFileSync, ChildProcess } from 'node:child_process';
+import crypto from 'node:crypto';
+import os from 'node:os';
+import { spawn, execFileSync, execSync, ChildProcess } from 'node:child_process';
+
+// 1. Single Instance Lock (Requirement 4)
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+}
 
 let mainWindow: BrowserWindow | null = null;
 let apiProcess: any = null;
 let pgProcess: ChildProcess | null = null;
+let dynamicPgPort = 0;
+let dynamicApiPort = 0;
+let apiSecretToken = crypto.randomBytes(32).toString('hex');
+let safeDirs: { baseDir: string; dataDir: string; logsDir: string } | null = null;
+let pgBinaries: any = null;
+let isStartingUp = false;
 
-// Persistent desktop logger
+// Safe ASCII Path Resolver (Requirement 2b - Never non-ASCII/Arabic usernames)
+function resolveSafeAsciiDir(): { baseDir: string; dataDir: string; logsDir: string } {
+  // 1. Primary: C:\ProgramData\FludoSuppliesERP (Standard Windows shared ASCII path)
+  const progData = process.env.ProgramData || 'C:\\ProgramData';
+  const cand1 = path.join(progData, 'FludoSuppliesERP');
+  try {
+    fs.mkdirSync(cand1, { recursive: true });
+    const testFile = path.join(cand1, 'perm.tmp');
+    fs.writeFileSync(testFile, 'ok');
+    fs.unlinkSync(testFile);
+    return {
+      baseDir: cand1,
+      dataDir: path.join(cand1, 'data'),
+      logsDir: path.join(cand1, 'logs'),
+    };
+  } catch {}
+
+  // 2. Secondary: Windows 8.3 Short ASCII Path of LOCALAPPDATA
+  try {
+    const localApp = process.env.LOCALAPPDATA || 'C:\\';
+    const shortLocal = execSync(`cmd /c for %I in ("${localApp}") do @echo %~sI`, { encoding: 'utf8' }).trim();
+    if (shortLocal) {
+      const cand2 = path.join(shortLocal, 'FludoERP');
+      fs.mkdirSync(cand2, { recursive: true });
+      return {
+        baseDir: cand2,
+        dataDir: path.join(cand2, 'data'),
+        logsDir: path.join(cand2, 'logs'),
+      };
+    }
+  } catch {}
+
+  // 3. Fallback: C:\FludoERP
+  const cand3 = 'C:\\FludoERP';
+  fs.mkdirSync(cand3, { recursive: true });
+  return {
+    baseDir: cand3,
+    dataDir: path.join(cand3, 'data'),
+    logsDir: path.join(cand3, 'logs'),
+  };
+}
+
+// Persistent logger
 function logDesktop(msg: string) {
   try {
-    const logDir = path.join(app.getPath('userData'), 'logs');
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    if (!safeDirs) safeDirs = resolveSafeAsciiDir();
+    if (!fs.existsSync(safeDirs.logsDir)) fs.mkdirSync(safeDirs.logsDir, { recursive: true });
     const line = `[${new Date().toISOString()}] ${msg}\n`;
-    fs.appendFileSync(path.join(logDir, 'desktop.log'), line, 'utf8');
+    fs.appendFileSync(path.join(safeDirs.logsDir, 'desktop.log'), line, 'utf8');
   } catch {}
   console.log(msg);
 }
 
-// Helper to check if a local TCP port is open
+// Broadcast startup progress or errors to UI
+function broadcastProgress(step: string, message: string, progress: number) {
+  logDesktop(`[PROGRESS ${progress}%] [${step}] ${message}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('startup-progress', { step, message, progress });
+  }
+}
+
+function broadcastError(step: string, error: string) {
+  logDesktop(`[ERROR] [${step}] ${error}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('startup-error', {
+      step,
+      error,
+      logsPath: safeDirs?.logsDir || 'C:\\ProgramData\\FludoSuppliesERP\\logs',
+    });
+  }
+}
+
+// Dynamic Free Port Allocator (Requirement 2a & 3 - Zero hardcoded ports)
+function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const port = (srv.address() as net.AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+    srv.on('error', reject);
+  });
+}
+
 function checkPortOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
-    socket.setTimeout(800);
+    socket.setTimeout(600);
     socket.once('connect', () => {
       socket.destroy();
       resolve(true);
@@ -44,203 +130,347 @@ function checkPortOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
   });
 }
 
-// Health check for local Fastify API
-function checkApiHealth(port = 4000): Promise<boolean> {
+function checkApiHealth(port: number, token: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const req = http.get(`http://127.0.0.1:${port}/api/health`, (res) => {
-      resolve(res.statusCode === 200);
-    });
+    const req = http.get(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/api/health',
+        headers: { 'x-app-token': token },
+        timeout: 800,
+      },
+      (res) => {
+        resolve(res.statusCode === 200);
+      }
+    );
     req.on('error', () => resolve(false));
-    req.setTimeout(800, () => {
+    req.on('timeout', () => {
       req.destroy();
       resolve(false);
     });
   });
 }
 
-// Start PostgreSQL if port 5433 is not already listening
-async function ensureDatabase() {
-  logDesktop('[DESKTOP] Checking if PostgreSQL is listening on port 5433...');
-  const isDbListening = await checkPortOpen(5433);
-  if (isDbListening) {
-    logDesktop('[DESKTOP] PostgreSQL is already listening on port 5433.');
-    return;
-  }
-
-  // Look for PostgreSQL installation candidates (Bundled portable FIRST)
+// Locate Portable PostgreSQL Binaries
+function resolvePostgresBinaries(): {
+  binDir: string;
+  postgresExe: string;
+  initdbExe: string;
+  createdbExe: string;
+  psqlExe: string;
+  pgIsReadyExe: string;
+  pgCtlExe: string;
+  shareDir: string;
+} {
   const appPath = app.getAppPath();
-  const pgExeCandidates = [
-    path.join(process.resourcesPath || '', 'pgsql', 'bin', 'postgres.exe'),
-    path.join(appPath, 'pgsql', 'bin', 'postgres.exe'),
-    path.resolve(__dirname, '../pgsql/bin/postgres.exe'),
-    path.resolve(appPath, '../../data/pgsql/bin/postgres.exe'),
-    'C:\\Program Files\\PostgreSQL\\18\\bin\\postgres.exe',
-    'C:\\Program Files\\PostgreSQL\\17\\bin\\postgres.exe',
-    'C:\\Program Files\\PostgreSQL\\16\\bin\\postgres.exe',
-    'C:\\Program Files\\PostgreSQL\\15\\bin\\postgres.exe',
+  const candidates = [
+    path.join(process.resourcesPath || '', 'pgsql', 'bin'),
+    path.join(appPath, 'pgsql', 'bin'),
+    path.resolve(__dirname, '../pgsql/bin'),
+    path.resolve(appPath, '../../pgsql/bin'),
+    path.resolve(appPath, '../../data/pgsql/bin'),
+    'C:\\Program Files\\PostgreSQL\\18\\bin',
+    'C:\\Program Files\\PostgreSQL\\17\\bin',
+    'C:\\Program Files\\PostgreSQL\\16\\bin',
   ];
-  const pgExe = pgExeCandidates.find((p) => fs.existsSync(p));
-  logDesktop(`[DESKTOP] Selected PostgreSQL binary: ${pgExe || 'NONE FOUND'}`);
-
-  const pgDataCandidates = [
-    path.join(app.getPath('userData'), 'pgdata'),
-    path.resolve(__dirname, '../../../data/pgdata'),
-    path.resolve(appPath, '../../data/pgdata'),
-    path.join(process.resourcesPath || '', 'data', 'pgdata'),
-    'C:\\ProgramData\\FludoSuppliesERP\\pgdata',
-  ];
-  let pgData = pgDataCandidates.find((p) => fs.existsSync(path.join(p, 'PG_VERSION')));
-
-  // Self-heal: If no existing cluster exists, initialize one automatically with initdb.exe!
-  if (pgExe && !pgData) {
-    const binDir = path.dirname(pgExe);
-    const initdbExe = path.join(binDir, 'initdb.exe');
-    const targetDir = path.join(app.getPath('userData'), 'pgdata');
-    const shareDir = path.join(path.dirname(binDir), 'share');
-
-    if (fs.existsSync(initdbExe)) {
-      logDesktop(`[DESKTOP] Initializing fresh PostgreSQL cluster at: ${targetDir}`);
-      try {
-        fs.mkdirSync(targetDir, { recursive: true });
-        const initArgs = ['-D', targetDir, '-U', 'erp_owner', '-A', 'trust', '-E', 'UTF8'];
-        if (fs.existsSync(shareDir)) {
-          initArgs.push('-L', shareDir);
-        }
-        execFileSync(initdbExe, initArgs, {
-          windowsHide: true,
-          stdio: 'pipe',
-        });
-
-        // Configure port 5433 in postgresql.conf
-        const confPath = path.join(targetDir, 'postgresql.conf');
-        if (fs.existsSync(confPath)) {
-          fs.appendFileSync(
-            confPath,
-            "\nport = 5433\nlisten_addresses = '127.0.0.1'\nmax_connections = 100\nshared_buffers = 128MB\n"
-          );
-        }
-        pgData = targetDir;
-        logDesktop('[DESKTOP] Database cluster initialized successfully with UTF-8 & trust auth.');
-      } catch (initErr: any) {
-        logDesktop(`[DESKTOP] Failed to auto-initdb: ${initErr?.message || initErr}`);
-      }
-    }
+  const binDir = candidates.find((b) => fs.existsSync(path.join(b, 'postgres.exe')));
+  if (!binDir) {
+    throw new Error('تعذر العثور على حزمة تشغيل PostgreSQL المحمولة في موارد التطبيق.');
   }
 
-  if (pgExe && pgData) {
-    logDesktop(`[DESKTOP] Starting PostgreSQL engine: ${pgExe} with data: ${pgData}`);
+  const shareDir = path.join(path.dirname(binDir), 'share');
+  return {
+    binDir,
+    postgresExe: path.join(binDir, 'postgres.exe'),
+    initdbExe: path.join(binDir, 'initdb.exe'),
+    createdbExe: path.join(binDir, 'createdb.exe'),
+    psqlExe: path.join(binDir, 'psql.exe'),
+    pgIsReadyExe: path.join(binDir, 'pg_isready.exe'),
+    pgCtlExe: path.join(binDir, 'pg_ctl.exe'),
+    shareDir,
+  };
+}
+
+// Stale PID and Orphan Process Cleanup (Requirement 2e)
+function cleanupStaleProcesses(dataDir: string) {
+  const pidFile = path.join(dataDir, 'postmaster.pid');
+  if (fs.existsSync(pidFile)) {
     try {
-      const logDir = path.join(app.getPath('userData'), 'logs');
-      if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-      const pgLogStream = fs.openSync(path.join(logDir, 'postgres.log'), 'a');
-
-      pgProcess = spawn(pgExe, ['-D', pgData, '-p', '5433'], {
-        detached: false,
-        stdio: ['ignore', pgLogStream, pgLogStream],
-        windowsHide: true,
-      });
-
-      // Wait with backoff up to 60 seconds for DB to accept connections
-      for (let i = 0; i < 60; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        if (await checkPortOpen(5433)) {
-          logDesktop('[DESKTOP] PostgreSQL successfully listening on port 5433.');
-          break;
-        }
+      const content = fs.readFileSync(pidFile, 'utf8');
+      const firstLine = content.split('\n')[0].trim();
+      const pid = parseInt(firstLine, 10);
+      if (pid && !isNaN(pid)) {
+        logDesktop(`[CLEANUP] Found postmaster.pid with PID ${pid}. Verifying...`);
+        try {
+          execSync(`taskkill /F /PID ${pid} /T`, { stdio: 'ignore' });
+          logDesktop(`[CLEANUP] Terminated old process ${pid}.`);
+        } catch {}
       }
-
-      // Ensure 'fludo_erp' database exists
-      const createdbExe = path.join(path.dirname(pgExe), 'createdb.exe');
-      if (fs.existsSync(createdbExe)) {
-        for (let attempt = 0; attempt < 5; attempt++) {
-          try {
-            execFileSync(createdbExe, ['-p', '5433', '-U', 'erp_owner', '-h', '127.0.0.1', 'fludo_erp'], {
-              windowsHide: true,
-              stdio: 'pipe',
-            });
-            logDesktop('[DESKTOP] Database fludo_erp verified/created successfully.');
-            break;
-          } catch (createErr: any) {
-            if (createErr?.message && createErr.message.includes('already exists')) {
-              logDesktop('[DESKTOP] Database fludo_erp already exists.');
-              break;
-            }
-            await new Promise((r) => setTimeout(r, 1000));
-          }
-        }
-      }
-    } catch (err: any) {
-      logDesktop(`[DESKTOP] Could not auto-spawn PostgreSQL process: ${err?.message || err}`);
-    }
-  } else {
-    logDesktop('[DESKTOP] Checking system PostgreSQL service on port 5433...');
-    for (let i = 0; i < 30; i++) {
-      if (await checkPortOpen(5433)) {
-        logDesktop('[DESKTOP] PostgreSQL service detected and accepting connections.');
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 1000));
+      fs.unlinkSync(pidFile);
+      logDesktop('[CLEANUP] Removed stale postmaster.pid.');
+    } catch (e: any) {
+      logDesktop(`[CLEANUP] Notice during pid cleanup: ${e.message}`);
     }
   }
 }
 
-// Start backend API if not already listening
-async function ensureApiServer() {
-  const isHealthy = await checkApiHealth(4000);
-  if (isHealthy) {
-    logDesktop('[DESKTOP] API server is already healthy on port 4000.');
-    return;
+// Graceful DB & API Shutdown (Requirement 2f)
+async function gracefulShutdown() {
+  logDesktop('[SHUTDOWN] Starting graceful system shutdown...');
+  if (apiProcess) {
+    try {
+      if (typeof apiProcess.kill === 'function') apiProcess.kill();
+    } catch {}
   }
 
-  const appPath = app.getAppPath();
-  const apiCandidates = [
-    path.join(appPath, 'api', 'index.js'),
-    path.join(__dirname, '../api/index.js'),
-    path.join(__dirname, 'api/index.js'),
-    path.resolve(__dirname, '../../services/api/dist/index.js'),
-  ];
-  const targetScript = apiCandidates.find((p) => fs.existsSync(p));
+  if (pgBinaries && safeDirs) {
+    try {
+      execFileSync(pgBinaries.pgCtlExe, ['stop', '-D', safeDirs.dataDir, '-m', 'fast'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      logDesktop('[SHUTDOWN] PostgreSQL cluster stopped cleanly via pg_ctl.');
+    } catch {}
+  }
 
-  if (targetScript) {
-    logDesktop(`[DESKTOP] Launching backend API from: ${targetScript}`);
+  if (pgProcess) {
+    try {
+      pgProcess.kill();
+    } catch {}
+  }
+}
+
+// Full Startup Orchestrator
+async function startFullSystem(): Promise<boolean> {
+  if (isStartingUp) return false;
+  isStartingUp = true;
+
+  try {
+    safeDirs = resolveSafeAsciiDir();
+    logDesktop(`[STARTUP] Safe ASCII Data directory: ${safeDirs.dataDir}`);
+    logDesktop(`[STARTUP] Safe ASCII Logs directory: ${safeDirs.logsDir}`);
+
+    // Clean stale postmaster.pid and orphans
+    cleanupStaleProcesses(safeDirs.dataDir);
+
+    // 1. Locate Binaries
+    broadcastProgress('binaries', 'جاري فحص وتجهيز محرك البيانات المحمول...', 15);
+    pgBinaries = resolvePostgresBinaries();
+    logDesktop(`[STARTUP] Using PG binaries from: ${pgBinaries.binDir}`);
+
+    // 2. Initialize DB Cluster if fresh install (Requirement 2c)
+    const isClusterInitialized = fs.existsSync(path.join(safeDirs.dataDir, 'PG_VERSION'));
+    if (!isClusterInitialized) {
+      broadcastProgress('db_init', 'جاري تهيئة وتأسيس قاعدة البيانات للمرة الأولى (UTF-8)...', 30);
+      logDesktop('[STARTUP] Initializing cluster with initdb.exe...');
+      fs.mkdirSync(safeDirs.dataDir, { recursive: true });
+
+      const initArgs = [
+        '-D', safeDirs.dataDir,
+        '-U', 'erp_owner',
+        '-A', 'trust',
+        '-E', 'UTF8',
+      ];
+      if (fs.existsSync(pgBinaries.shareDir)) {
+        initArgs.push('-L', pgBinaries.shareDir);
+      }
+
+      try {
+        execFileSync(pgBinaries.initdbExe, initArgs, {
+          windowsHide: true,
+          stdio: 'pipe',
+          encoding: 'utf8',
+        });
+        logDesktop('[STARTUP] initdb completed successfully.');
+      } catch (initErr: any) {
+        throw new Error(`فشلت تهيئة قاعدة البيانات (initdb): ${initErr?.stderr || initErr?.message || initErr}`);
+      }
+    }
+
+    // 3. Allocate Dynamic Ports (Requirement 2a & 3)
+    dynamicPgPort = await getFreePort();
+    dynamicApiPort = await getFreePort();
+    logDesktop(`[STARTUP] Allocated dynamic PG port: ${dynamicPgPort}, API port: ${dynamicApiPort}`);
+
+    // 4. Configure postgresql.conf with dynamic port
+    const confPath = path.join(safeDirs.dataDir, 'postgresql.conf');
+    let confContent = fs.existsSync(confPath) ? fs.readFileSync(confPath, 'utf8') : '';
+    confContent = confContent.replace(/^port\s*=\s*\d+/gm, '');
+    confContent += `\nport = ${dynamicPgPort}\nlisten_addresses = '127.0.0.1'\nmax_connections = 100\nshared_buffers = 128MB\n`;
+    fs.writeFileSync(confPath, confContent, 'utf8');
+
+    // 5. Start postgres child process
+    broadcastProgress('db_start', `جاري تشغيل محرك البيانات على المنفذ الحر ${dynamicPgPort}...`, 45);
+    const pgLogPath = path.join(safeDirs.logsDir, 'postgres.log');
+    const pgLogFd = fs.openSync(pgLogPath, 'a');
+
+    pgProcess = spawn(pgBinaries.postgresExe, ['-D', safeDirs.dataDir, '-p', String(dynamicPgPort)], {
+      detached: false,
+      stdio: ['ignore', pgLogFd, pgLogFd],
+      windowsHide: true,
+    });
+
+    // 6. Wait for pg_isready (Requirement 2d - up to 60s)
+    broadcastProgress('db_ready', 'جاري انتظار جاهزية واستقرار محرك البيانات (pg_isready)...', 60);
+    let ready = false;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        execFileSync(pgBinaries.pgIsReadyExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        ready = true;
+        break;
+      } catch {}
+    }
+
+    if (!ready) {
+      let tailLog = '';
+      try {
+        tailLog = fs.readFileSync(pgLogPath, 'utf8').split('\n').slice(-10).join('\n');
+      } catch {}
+      throw new Error(`تعذر على محرك البيانات بدء العمل خلال 60 ثانية. تفاصيل السجل: ${tailLog}`);
+    }
+    logDesktop('[STARTUP] PostgreSQL accepted connections.');
+
+    // 7. Ensure database fludo_erp exists
+    broadcastProgress('migrations', 'جاري التحقق من وجود قاعدة البيانات والجداول الهيكلية...', 75);
+    try {
+      execFileSync(pgBinaries.createdbExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', 'fludo_erp'], {
+        stdio: 'pipe',
+        windowsHide: true,
+      });
+      logDesktop('[STARTUP] Created fludo_erp database.');
+    } catch {
+      // already exists
+    }
+
+    const appPath = app.getAppPath();
+
+    // Check if initial schema is present, if not run 0001 and 0002
+    try {
+      const checkTables = execFileSync(
+        pgBinaries.psqlExe,
+        ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-t', '-c', "SELECT to_regclass('app.users');"],
+        { encoding: 'utf8', windowsHide: true, stdio: 'pipe' }
+      ).trim();
+
+      if (!checkTables || checkTables === '') {
+        logDesktop('[STARTUP] Fresh DB detected. Applying migrations 0001 and 0002...');
+        broadcastProgress('migrations', 'جاري تهيئة جداول النظام والمحاسبة والمخازن...', 80);
+        const mig1Candidates = [
+          path.join(appPath, '0001_initial.sql'),
+          path.join(__dirname, '../0001_initial.sql'),
+          path.join(__dirname, '0001_initial.sql'),
+          path.resolve(__dirname, '../../db/migrations/0001_initial.sql'),
+        ];
+        const mig1 = mig1Candidates.find((m) => fs.existsSync(m));
+        if (mig1) {
+          execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-f', mig1], {
+            stdio: 'pipe',
+            windowsHide: true,
+          });
+          logDesktop('[STARTUP] 0001_initial.sql applied via psql.');
+        }
+
+        const mig2Candidates = [
+          path.join(appPath, '0002_fix_constraints_and_search.sql'),
+          path.join(__dirname, '../0002_fix_constraints_and_search.sql'),
+          path.join(__dirname, '0002_fix_constraints_and_search.sql'),
+          path.resolve(__dirname, '../../db/migrations/0002_fix_constraints_and_search.sql'),
+        ];
+        const mig2 = mig2Candidates.find((m) => fs.existsSync(m));
+        if (mig2) {
+          execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-f', mig2], {
+            stdio: 'pipe',
+            windowsHide: true,
+          });
+          logDesktop('[STARTUP] 0002_fix_constraints_and_search.sql applied via psql.');
+        }
+      }
+    } catch (migErr: any) {
+      logDesktop(`[STARTUP] Note on migration check: ${migErr?.message}`);
+    }
+
+    // 8. Launch API Server child process with dynamic ports & security token
+    broadcastProgress('api_start', `جاري تشغيل خادم النظام الآمن على المنفذ الحر ${dynamicApiPort}...`, 85);
+    const apiCandidates = [
+      path.join(appPath, 'api', 'index.js'),
+      path.join(__dirname, '../api/index.js'),
+      path.join(__dirname, 'api/index.js'),
+      path.resolve(__dirname, '../../services/api/dist/index.js'),
+    ];
+    const targetScript = apiCandidates.find((p) => fs.existsSync(p));
+    if (!targetScript) {
+      throw new Error('تعذر العثور على ملفات تشغيل خادم النظام (api/index.js).');
+    }
 
     const apiEnv = {
       ...process.env,
-      PORT: '4000',
-      PGPORT: '5433',
+      PORT: String(dynamicApiPort),
+      PGPORT: String(dynamicPgPort),
+      PGHOST: '127.0.0.1',
+      PGUSER: 'erp_owner',
+      PGDATABASE: 'fludo_erp',
+      APP_SECRET_TOKEN: apiSecretToken,
       NODE_ENV: 'production',
     };
 
-    try {
-      if (typeof utilityProcess !== 'undefined' && utilityProcess.fork) {
-        apiProcess = utilityProcess.fork(targetScript, [], {
-          env: apiEnv,
-          stdio: 'inherit',
-        });
-      } else {
-        const { fork } = await import('node:child_process');
-        apiProcess = fork(targetScript, [], {
-          env: apiEnv,
-          stdio: 'inherit',
-        });
-      }
+    const apiLogPath = path.join(safeDirs.logsDir, 'api.log');
+    const apiLogFd = fs.openSync(apiLogPath, 'a');
 
-      // Wait up to 45 seconds for API to be ready
-      for (let i = 0; i < 45; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        if (await checkApiHealth(4000)) {
-          logDesktop('[DESKTOP] Backend API is ready and healthy on port 4000.');
-          break;
-        }
+    if (typeof utilityProcess !== 'undefined' && utilityProcess.fork) {
+      apiProcess = utilityProcess.fork(targetScript, [], {
+        env: apiEnv,
+        stdio: 'pipe',
+      });
+      if (apiProcess.stdout) {
+        apiProcess.stdout.pipe(fs.createWriteStream(apiLogPath, { flags: 'a' }));
       }
-    } catch (err: any) {
-      logDesktop(`[DESKTOP] Failed to fork backend API: ${err?.message || err}`);
+      if (apiProcess.stderr) {
+        apiProcess.stderr.pipe(fs.createWriteStream(apiLogPath, { flags: 'a' }));
+      }
+    } else {
+      const { fork } = await import('node:child_process');
+      apiProcess = fork(targetScript, [], {
+        env: apiEnv,
+        stdio: ['ignore', apiLogFd, apiLogFd],
+      });
     }
-  } else {
-    logDesktop('[DESKTOP] API script bundle not found in candidate paths.');
+
+    // Wait for API to accept requests
+    let apiReady = false;
+    for (let i = 0; i < 45; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (await checkApiHealth(dynamicApiPort, apiSecretToken)) {
+        apiReady = true;
+        break;
+      }
+    }
+
+    if (!apiReady) {
+      let tailApiLog = '';
+      try {
+        tailApiLog = fs.readFileSync(apiLogPath, 'utf8').split('\n').slice(-10).join('\n');
+      } catch {}
+      throw new Error(`تعذر بدء خادم النظام خلال 45 ثانية. تفاصيل السجل: ${tailApiLog}`);
+    }
+
+    broadcastProgress('ready', 'تم تشغيل النظام ومحرك البيانات بنجاح!', 100);
+    logDesktop(`[STARTUP] Entire system running successfully! API: ${dynamicApiPort}, DB: ${dynamicPgPort}`);
+
+    isStartingUp = false;
+    return true;
+  } catch (err: any) {
+    isStartingUp = false;
+    broadcastError('startup', err?.message || String(err));
+    return false;
   }
 }
 
+// Window Management
 function createWindow() {
   const preloadPath = path.join(__dirname, 'preload.js');
 
@@ -249,7 +479,7 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
-    title: 'شركة الرضا للتوريدات — Fludo ERP',
+    title: 'شركة الرضا للتوريدات — Fludo ERP v1.4.0',
     backgroundColor: '#0f172a',
     autoHideMenuBar: true,
     show: false,
@@ -268,19 +498,13 @@ function createWindow() {
   const packagedUiPath = path.join(appPath, 'ui', 'index.html');
   const localUiDistPath = path.resolve(__dirname, '../../ui/dist/index.html');
 
-  console.log('[DESKTOP] appPath:', appPath);
-  console.log('[DESKTOP] packagedUiPath:', packagedUiPath, 'exists:', fs.existsSync(packagedUiPath));
-
   if (isDev) {
     mainWindow.loadURL('http://127.0.0.1:3000');
   } else if (fs.existsSync(packagedUiPath)) {
-    console.log('[DESKTOP] Loading UI from packaged file:', packagedUiPath);
     mainWindow.loadFile(packagedUiPath);
   } else if (fs.existsSync(localUiDistPath)) {
-    console.log('[DESKTOP] Loading UI from local dist file:', localUiDistPath);
     mainWindow.loadFile(localUiDistPath);
   } else {
-    console.log('[DESKTOP] Falling back to URL http://127.0.0.1:3000');
     mainWindow.loadURL('http://127.0.0.1:3000');
   }
 
@@ -288,11 +512,6 @@ function createWindow() {
     mainWindow?.show();
   });
 
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
-    console.error(`[DESKTOP] Failed to load URL: ${validatedURL} (Code: ${errorCode}, Desc: ${errorDescription})`);
-  });
-
-  // F12 to toggle DevTools if needed
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.key === 'F12' && input.type === 'keyDown') {
       mainWindow?.webContents.toggleDevTools();
@@ -304,10 +523,19 @@ function createWindow() {
   });
 }
 
+// Electron Application Lifecycle
 app.whenReady().then(async () => {
-  await ensureDatabase();
-  await ensureApiServer();
   createWindow();
+
+  // IPC Handlers
+  ipcMain.handle('get-app-version', () => app.getVersion());
+
+  ipcMain.handle('get-api-config', () => ({
+    apiBase: `http://127.0.0.1:${dynamicApiPort}/api`,
+    appToken: apiSecretToken,
+    dbPort: dynamicPgPort,
+    apiPort: dynamicApiPort,
+  }));
 
   ipcMain.on('print-window', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -316,27 +544,72 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle('get-app-version', () => app.getVersion());
+  ipcMain.on('open-logs-folder', () => {
+    if (safeDirs?.logsDir && fs.existsSync(safeDirs.logsDir)) {
+      shell.openPath(safeDirs.logsDir);
+    }
+  });
+
+  ipcMain.handle('export-diagnostics', async () => {
+    try {
+      const desktopPath = app.getPath('desktop');
+      const diagFileName = `fludo_erp_diagnostics_${Date.now()}.txt`;
+      const targetFile = path.join(desktopPath, diagFileName);
+
+      let report = `=== FLUDO ERP DIAGNOSTICS REPORT ===\n`;
+      report += `Generated at: ${new Date().toISOString()}\n`;
+      report += `OS: ${os.type()} ${os.release()} (${os.arch()})\n`;
+      report += `App Version: ${app.getVersion()}\n`;
+      report += `Dynamic DB Port: ${dynamicPgPort}\n`;
+      report += `Dynamic API Port: ${dynamicApiPort}\n`;
+      report += `Data Directory: ${safeDirs?.dataDir}\n`;
+      report += `Logs Directory: ${safeDirs?.logsDir}\n\n`;
+
+      const files = ['desktop.log', 'postgres.log', 'api.log'];
+      for (const f of files) {
+        report += `--- LOG: ${f} ---\n`;
+        const logFile = path.join(safeDirs?.logsDir || '', f);
+        if (fs.existsSync(logFile)) {
+          const content = fs.readFileSync(logFile, 'utf8');
+          report += content.split('\n').slice(-50).join('\n') + '\n\n';
+        } else {
+          report += '(file not found)\n\n';
+        }
+      }
+
+      fs.writeFileSync(targetFile, report, 'utf8');
+      return { success: true, path: targetFile };
+    } catch (err: any) {
+      return { success: false, error: err?.message };
+    }
+  });
+
+  ipcMain.on('retry-startup', async () => {
+    logDesktop('[STARTUP] User requested retry startup.');
+    await startFullSystem();
+  });
+
+  // Start orchestrator in background
+  await startFullSystem();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on('will-quit', () => {
-  if (apiProcess) {
-    try {
-      if (typeof apiProcess.kill === 'function') apiProcess.kill();
-    } catch {}
-  }
-  if (pgProcess) {
-    try {
-      pgProcess.kill();
-    } catch {}
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
   }
 });
 
-app.on('window-all-closed', () => {
+app.on('will-quit', async (e) => {
+  await gracefulShutdown();
+});
+
+app.on('window-all-closed', async () => {
+  await gracefulShutdown();
   if (process.platform !== 'darwin') {
     app.quit();
   }

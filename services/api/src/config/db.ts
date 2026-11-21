@@ -2,6 +2,11 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
+export interface TxContext {
+  userId?: string;
+  editApprovalId?: string;
+}
+
 export const pool = new Pool({
   host: process.env.PGHOST || '127.0.0.1',
   port: parseInt(process.env.PGPORT || '5433', 10),
@@ -12,11 +17,6 @@ export const pool = new Pool({
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
 });
-
-export interface TxContext {
-  userId?: string;
-  editApprovalId?: string;
-}
 
 export async function withTransaction<T>(
   callback: (client: pg.PoolClient) => Promise<T>,
@@ -35,7 +35,9 @@ export async function withTransaction<T>(
     await client.query('COMMIT');
     return result;
   } catch (error) {
-    await client.query('ROLLBACK');
+    try {
+      await client.query('ROLLBACK');
+    } catch {}
     throw error;
   } finally {
     client.release();

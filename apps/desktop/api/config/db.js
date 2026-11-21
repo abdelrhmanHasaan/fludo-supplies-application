@@ -32,7 +32,10 @@ async function withTransaction(callback, ctx) {
         return result;
     }
     catch (error) {
-        await client.query('ROLLBACK');
+        try {
+            await client.query('ROLLBACK');
+        }
+        catch { }
         throw error;
     }
     finally {

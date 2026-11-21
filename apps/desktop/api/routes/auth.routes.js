@@ -48,8 +48,7 @@ const authRoutes = async (fastify) => {
         const passwordHash = await (0, security_js_1.hashSecret)(password);
         const pinHash = await (0, security_js_1.hashSecret)(cleanPin);
         const result = await (0, db_js_1.withTransaction)(async (client) => {
-            // 1. Update company / tenant name if tenant exists
-            await client.query(`UPDATE app.tenants SET name = $1, updated_at = NOW()`, [cleanCompanyName]);
+            // 1. Update company profile name
             await client.query(`UPDATE app.company_profile SET name_ar = $1, updated_at = NOW()`, [cleanCompanyName]);
             // Clean up any unauthenticated placeholder users
             await client.query(`DELETE FROM app.users WHERE last_login_at IS NULL`);

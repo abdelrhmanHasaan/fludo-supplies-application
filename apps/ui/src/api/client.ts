@@ -1,4 +1,30 @@
-const API_BASE = (window as any).__API_BASE__ || 'http://127.0.0.1:4000/api';
+let currentApiBase = (window as any).__API_BASE__ || '';
+let currentAppToken = (window as any).__APP_TOKEN__ || '';
+let configPromise: Promise<void> | null = null;
+
+export function ensureConfigLoaded(): Promise<void> {
+  if (!configPromise) {
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.getApiConfig) {
+      configPromise = (window as any).electronAPI
+        .getApiConfig()
+        .then((cfg: any) => {
+          if (cfg?.apiBase) currentApiBase = cfg.apiBase;
+          if (cfg?.appToken) currentAppToken = cfg.appToken;
+        })
+        .catch(() => {});
+    } else {
+      configPromise = Promise.resolve();
+    }
+  }
+  return configPromise || Promise.resolve();
+}
+
+// Kick off config resolution immediately on module evaluation
+ensureConfigLoaded();
+
+export function getApiBase(): string {
+  return currentApiBase || (window.location.origin.includes('3000') || window.location.origin.includes('5173') ? 'http://127.0.0.1:4000/api' : '/api');
+}
 
 export function getStoredToken(): string | null {
   return localStorage.getItem('fludo_token');
@@ -14,6 +40,7 @@ export function clearStoredToken() {
 }
 
 export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  await ensureConfigLoaded();
   const token = getStoredToken();
   const headers = new Headers(options.headers || {});
 
@@ -21,11 +48,19 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
     headers.set('Content-Type', 'application/json');
   }
 
+  // Attach per-launch app token if present
+  if (currentAppToken) {
+    headers.set('x-app-token', currentAppToken);
+  }
+
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
+  const base = getApiBase();
+  const url = endpoint.startsWith('http') ? endpoint : `${base}${endpoint}`;
+
+  const res = await fetch(url, {
     ...options,
     headers,
   });

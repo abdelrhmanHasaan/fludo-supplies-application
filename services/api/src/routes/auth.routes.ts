@@ -67,11 +67,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     const pinHash = await hashSecret(cleanPin);
 
     const result = await withTransaction(async (client) => {
-      // 1. Update company / tenant name if tenant exists
-      await client.query(
-        `UPDATE app.tenants SET name = $1, updated_at = NOW()`,
-        [cleanCompanyName]
-      );
+      // 1. Update company profile name
       await client.query(
         `UPDATE app.company_profile SET name_ar = $1, updated_at = NOW()`,
         [cleanCompanyName]
