@@ -8,23 +8,10 @@ import http from 'node:http';
 import net from 'node:net';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { spawn, execFileSync, execSync, ChildProcess } from 'node:child_process';
 
-// 1. Single Instance Lock (Requirement 4)
-const gotTheLock = app.requestSingleInstanceLock();
-if (!gotTheLock) {
-  app.quit();
-}
-
-let mainWindow: BrowserWindow | null = null;
-let apiProcess: any = null;
-let pgProcess: ChildProcess | null = null;
-let dynamicPgPort = 0;
-let dynamicApiPort = 0;
-let apiSecretToken = crypto.randomBytes(32).toString('hex');
 let safeDirs: { baseDir: string; dataDir: string; logsDir: string } | null = null;
-let pgBinaries: any = null;
-let isStartingUp = false;
 
 // Safe ASCII Path Resolver (Requirement 2b - Never non-ASCII/Arabic usernames)
 function resolveSafeAsciiDir(): { baseDir: string; dataDir: string; logsDir: string } {
@@ -78,6 +65,39 @@ function logDesktop(msg: string) {
   } catch {}
   console.log(msg);
 }
+
+// Global Exception Trap
+process.on('uncaughtException', (err: any) => {
+  logDesktop(`[FATAL UNCAUGHT] ${err?.stack || err?.message || err}`);
+});
+process.on('unhandledRejection', (reason: any) => {
+  logDesktop(`[FATAL REJECTION] ${reason?.stack || reason?.message || reason}`);
+});
+
+logDesktop(`=== APP LAUNCH (PID: ${process.pid}, version: 1.4.0) ===`);
+
+// 1. Single Instance Lock (Requirement 4)
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  logDesktop('[INSTANCE] Secondary instance detected. Exiting.');
+  app.quit();
+}
+
+let mainWindow: BrowserWindow | null = null;
+let apiProcess: any = null;
+let apiServerInstance: any = null;
+let pgProcess: ChildProcess | null = null;
+let dynamicPgPort = 0;
+let dynamicApiPort = 0;
+let apiSecretToken = crypto.randomBytes(32).toString('hex');
+let pgBinaries: any = null;
+let isStartingUp = false;
+let isSystemReady = false;
+let startupError: string | null = null;
+let systemReadyResolve: ((value: boolean) => void) | null = null;
+let systemReadyPromise = new Promise<boolean>((resolve) => {
+  systemReadyResolve = resolve;
+});
 
 // Broadcast startup progress or errors to UI
 function broadcastProgress(step: string, message: string, progress: number) {
@@ -203,12 +223,20 @@ function cleanupStaleProcesses(dataDir: string) {
       if (pid && !isNaN(pid)) {
         logDesktop(`[CLEANUP] Found postmaster.pid with PID ${pid}. Verifying...`);
         try {
-          execSync(`taskkill /F /PID ${pid} /T`, { stdio: 'ignore' });
-          logDesktop(`[CLEANUP] Terminated old process ${pid}.`);
-        } catch {}
+          process.kill(pid);
+          logDesktop(`[CLEANUP] Sent kill signal to old process ${pid}.`);
+        } catch (killErr: any) {
+          logDesktop(`[CLEANUP] Process ${pid} is not running (${killErr?.message}).`);
+        }
       }
-      fs.unlinkSync(pidFile);
-      logDesktop('[CLEANUP] Removed stale postmaster.pid.');
+      try {
+        if (fs.existsSync(pidFile)) {
+          fs.unlinkSync(pidFile);
+          logDesktop('[CLEANUP] Removed stale postmaster.pid.');
+        }
+      } catch (unlinkErr: any) {
+        logDesktop(`[CLEANUP] Notice during unlinking postmaster.pid: ${unlinkErr?.message}`);
+      }
     } catch (e: any) {
       logDesktop(`[CLEANUP] Notice during pid cleanup: ${e.message}`);
     }
@@ -218,6 +246,12 @@ function cleanupStaleProcesses(dataDir: string) {
 // Graceful DB & API Shutdown (Requirement 2f)
 async function gracefulShutdown() {
   logDesktop('[SHUTDOWN] Starting graceful system shutdown...');
+  if (apiServerInstance && typeof apiServerInstance.close === 'function') {
+    try {
+      await apiServerInstance.close();
+      logDesktop('[SHUTDOWN] In-process Fastify API closed.');
+    } catch {}
+  }
   if (apiProcess) {
     try {
       if (typeof apiProcess.kill === 'function') apiProcess.kill();
@@ -407,36 +441,45 @@ async function startFullSystem(): Promise<boolean> {
       throw new Error('تعذر العثور على ملفات تشغيل خادم النظام (api/index.js).');
     }
 
+    process.env.PORT = String(dynamicApiPort);
+    process.env.PGPORT = String(dynamicPgPort);
+    process.env.PGHOST = '127.0.0.1';
+    process.env.PGUSER = 'erp_owner';
+    process.env.PGDATABASE = 'fludo_erp';
+    process.env.APP_SECRET_TOKEN = apiSecretToken;
+    process.env.NODE_ENV = 'production';
+
     const apiEnv = {
       ...process.env,
-      PORT: String(dynamicApiPort),
-      PGPORT: String(dynamicPgPort),
-      PGHOST: '127.0.0.1',
-      PGUSER: 'erp_owner',
-      PGDATABASE: 'fludo_erp',
-      APP_SECRET_TOKEN: apiSecretToken,
-      NODE_ENV: 'production',
     };
 
     const apiLogPath = path.join(safeDirs.logsDir, 'api.log');
     const apiLogFd = fs.openSync(apiLogPath, 'a');
 
-    if (typeof utilityProcess !== 'undefined' && utilityProcess.fork) {
-      apiProcess = utilityProcess.fork(targetScript, [], {
-        env: apiEnv,
-        stdio: 'pipe',
-      });
-      if (apiProcess.stdout) {
-        apiProcess.stdout.pipe(fs.createWriteStream(apiLogPath, { flags: 'a' }));
+    logDesktop(`[STARTUP] Starting Fastify API in Electron main process on dynamic port ${dynamicApiPort}...`);
+    try {
+      logDesktop(`[STARTUP] Loading API module from: ${targetScript}`);
+      let apiModule: any;
+      try {
+        apiModule = require(targetScript);
+      } catch (reqErr: any) {
+        logDesktop(`[STARTUP] require() notice (${reqErr?.message}), trying dynamic import...`);
+        const scriptUrl = pathToFileURL(targetScript).href;
+        apiModule = await import(scriptUrl);
       }
-      if (apiProcess.stderr) {
-        apiProcess.stderr.pipe(fs.createWriteStream(apiLogPath, { flags: 'a' }));
+
+      if (typeof apiModule.startServer === 'function') {
+        apiServerInstance = await apiModule.startServer(dynamicApiPort, dynamicPgPort, apiSecretToken);
+      } else if (typeof apiModule.start === 'function') {
+        apiServerInstance = await apiModule.start();
       }
-    } else {
+      logDesktop(`[STARTUP] Fastify API listening in main process on http://127.0.0.1:${dynamicApiPort}`);
+    } catch (inProcErr: any) {
+      logDesktop(`[STARTUP] In-process API start failed (${inProcErr?.message}). Falling back to child process...`);
       const { fork } = await import('node:child_process');
       apiProcess = fork(targetScript, [], {
         env: apiEnv,
-        stdio: ['ignore', apiLogFd, apiLogFd],
+        stdio: ['ignore', apiLogFd, apiLogFd, 'ipc'],
       });
     }
 
@@ -461,11 +504,17 @@ async function startFullSystem(): Promise<boolean> {
     broadcastProgress('ready', 'تم تشغيل النظام ومحرك البيانات بنجاح!', 100);
     logDesktop(`[STARTUP] Entire system running successfully! API: ${dynamicApiPort}, DB: ${dynamicPgPort}`);
 
+    isSystemReady = true;
+    startupError = null;
     isStartingUp = false;
+    systemReadyResolve?.(true);
     return true;
   } catch (err: any) {
     isStartingUp = false;
-    broadcastError('startup', err?.message || String(err));
+    isSystemReady = false;
+    startupError = err?.message || String(err);
+    systemReadyResolve?.(false);
+    broadcastError('startup', startupError || 'خطأ غير معروف في بدء تشغيل النظام');
     return false;
   }
 }
@@ -530,12 +579,22 @@ app.whenReady().then(async () => {
   // IPC Handlers
   ipcMain.handle('get-app-version', () => app.getVersion());
 
-  ipcMain.handle('get-api-config', () => ({
-    apiBase: `http://127.0.0.1:${dynamicApiPort}/api`,
-    appToken: apiSecretToken,
-    dbPort: dynamicPgPort,
-    apiPort: dynamicApiPort,
-  }));
+  ipcMain.handle('get-api-config', async () => {
+    if (!isSystemReady && !startupError) {
+      await Promise.race([
+        systemReadyPromise,
+        new Promise((r) => setTimeout(r, 45000)),
+      ]);
+    }
+    return {
+      apiBase: dynamicApiPort > 0 ? `http://127.0.0.1:${dynamicApiPort}/api` : '',
+      appToken: apiSecretToken,
+      dbPort: dynamicPgPort,
+      apiPort: dynamicApiPort,
+      isReady: isSystemReady,
+      error: startupError,
+    };
+  });
 
   ipcMain.on('print-window', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -586,6 +645,12 @@ app.whenReady().then(async () => {
 
   ipcMain.on('retry-startup', async () => {
     logDesktop('[STARTUP] User requested retry startup.');
+    isStartingUp = false;
+    isSystemReady = false;
+    startupError = null;
+    systemReadyPromise = new Promise<boolean>((resolve) => {
+      systemReadyResolve = resolve;
+    });
     await startFullSystem();
   });
 

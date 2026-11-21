@@ -37,6 +37,7 @@ data/pglite_db/
 data/test_wrapper_db/
 *.xlsx
 
-# Installer executable (tracked via Git LFS)
+# Installer executables (uploaded to GitHub Releases)
+installer/*.exe
 installer/*.blockmap
 apps/desktop/pgsql/

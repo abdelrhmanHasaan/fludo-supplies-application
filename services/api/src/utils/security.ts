@@ -1,31 +1,32 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
-import argon2 from 'argon2';
+import { argon2Verify } from 'hash-wasm';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fludo-supplies-erp-local-secret-key-32-chars-min';
 
 export async function hashSecret(secret: string): Promise<string> {
-  return await argon2.hash(secret, {
-    type: argon2.argon2id,
-    memoryCost: 65536, // 64 MB
-    timeCost: 3,
-    parallelism: 4,
+  const salt = crypto.randomBytes(16).toString('hex');
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(secret, salt, 64, { N: 16384, r: 8, p: 1 }, (err, derivedKey) => {
+      if (err) return reject(err);
+      resolve(`${salt}:${derivedKey.toString('hex')}`);
+    });
   });
 }
 
 export async function verifySecret(secret: string, combinedHash: string): Promise<boolean> {
   if (!secret || !combinedHash) return false;
 
-  // Support Argon2id hashes
+  // Support legacy or existing Argon2id hashes via pure WebAssembly
   if (combinedHash.startsWith('$argon2')) {
     try {
-      return await argon2.verify(combinedHash, secret);
+      return await argon2Verify({ password: secret, hash: combinedHash });
     } catch {
       return false;
     }
   }
 
-  // Fallback for legacy scrypt hashes (salt:hash)
+  // Pure Node.js built-in scrypt hashes (salt:hash)
   if (combinedHash.includes(':')) {
     return new Promise((resolve) => {
       const [salt, key] = combinedHash.split(':');

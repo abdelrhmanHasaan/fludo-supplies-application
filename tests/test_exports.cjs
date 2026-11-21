@@ -12,8 +12,8 @@ async function testExports() {
   // 1. Test Yomia 10-Sheet Excel Export
   console.log('\n[1/3] Testing GET /api/data/export/yomia...');
   const yomiaRes = await fetch('http://127.0.0.1:4000/api/data/export/yomia?fix_formulas=true');
-  assert(yomiaRes.ok, `Yomia export failed: status ${yomiaRes.status}`);
   const yomiaBuffer = Buffer.from(await yomiaRes.arrayBuffer());
+  assert(yomiaRes.ok, `Yomia export failed: status ${yomiaRes.status}`);
   const yomiaPath = path.join(outDir, 'yomia_exported.xlsx');
   fs.writeFileSync(yomiaPath, yomiaBuffer);
   console.log(`✓ Yomia 10-Sheet Excel exported! Size: ${yomiaBuffer.length} bytes -> ${yomiaPath}`);

@@ -9,7 +9,7 @@
     "stage": "node ../../scripts/prepare_package.cjs",
     "pack:dir": "electron-builder --dir",
     "pack:exe": "electron-builder --win nsis",
-    "dist": "npm run build:main && npm run stage && electron-builder --win nsis"
+    "dist": "npm run --prefix ../.. build && npm run stage && electron-builder --win nsis"
   },
   "build": {
     "electronVersion": "34.2.0",

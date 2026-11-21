@@ -26,6 +26,9 @@ const apiTarget = path.join(rootDir, 'apps', 'desktop', 'api');
 
 console.log('[PREPARE] Copying UI bundle to desktop package...');
 if (fs.existsSync(uiDist)) {
+  if (fs.existsSync(uiTarget)) {
+    fs.rmSync(uiTarget, { recursive: true, force: true });
+  }
   copyDirSync(uiDist, uiTarget);
   console.log('  ✓ UI copied successfully to:', uiTarget);
 } else {
@@ -35,6 +38,9 @@ if (fs.existsSync(uiDist)) {
 
 console.log('[PREPARE] Copying API bundle to desktop package...');
 if (fs.existsSync(apiDist)) {
+  if (fs.existsSync(apiTarget)) {
+    fs.rmSync(apiTarget, { recursive: true, force: true });
+  }
   copyDirSync(apiDist, apiTarget);
   console.log('  ✓ API copied successfully to:', apiTarget);
 } else {
@@ -100,8 +106,8 @@ if (fs.existsSync(pgsqlDestExe)) {
   }
 }
 
-// Ensure VC++ 2015-2022 runtime DLLs are copied to pgsql/bin
-const vcDlls = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll'];
+// Ensure VC++ 2015-2022 runtime DLLs & UCRT are copied to pgsql/bin
+const vcDlls = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'ucrtbase.dll'];
 const sys32Dir = 'C:\\Windows\\System32';
 const targetPgBin = path.join(pgsqlDest, 'bin');
 if (fs.existsSync(targetPgBin)) {

@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import dotenv from 'dotenv';
-import { pool } from './config/db.js';
+import { pool, resetPool } from './config/db.js';
 import { hashSecret } from './utils/security.js';
 
 import { authRoutes } from './routes/auth.routes.js';
@@ -196,9 +196,25 @@ async function start() {
 
   await fastify.listen({ port, host });
   console.log(`Fludo ERP API server running on http://${host}:${port}`);
+  return fastify;
 }
 
-start().catch((err) => {
-  console.error('Fatal startup error:', err);
-  process.exit(1);
-});
+export async function startServer(customPort?: number, customPgPort?: number, token?: string) {
+  if (customPort) process.env.PORT = String(customPort);
+  if (customPgPort) {
+    process.env.PGPORT = String(customPgPort);
+    resetPool();
+  }
+  if (token) process.env.APP_SECRET_TOKEN = token;
+  return await start();
+}
+
+export { fastify, start };
+
+// Only call start() automatically when executed as standalone script file
+if (process.argv[1] && (process.argv[1].endsWith('index.js') || process.argv[1].endsWith('index.ts'))) {
+  start().catch((err) => {
+    console.error('Fatal startup error:', err);
+    process.exit(1);
+  });
+}

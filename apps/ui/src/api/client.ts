@@ -1,29 +1,33 @@
 let currentApiBase = (window as any).__API_BASE__ || '';
 let currentAppToken = (window as any).__APP_TOKEN__ || '';
-let configPromise: Promise<void> | null = null;
 
-export function ensureConfigLoaded(): Promise<void> {
-  if (!configPromise) {
-    if (typeof window !== 'undefined' && (window as any).electronAPI?.getApiConfig) {
-      configPromise = (window as any).electronAPI
-        .getApiConfig()
-        .then((cfg: any) => {
-          if (cfg?.apiBase) currentApiBase = cfg.apiBase;
-          if (cfg?.appToken) currentAppToken = cfg.appToken;
-        })
-        .catch(() => {});
-    } else {
-      configPromise = Promise.resolve();
+export async function ensureConfigLoaded(): Promise<void> {
+  if (currentApiBase) return;
+  if (typeof window !== 'undefined' && (window as any).electronAPI?.getApiConfig) {
+    try {
+      const cfg = await (window as any).electronAPI.getApiConfig();
+      if (cfg?.apiBase) currentApiBase = cfg.apiBase;
+      if (cfg?.appToken) currentAppToken = cfg.appToken;
+    } catch (e) {
+      console.warn('[client] Failed to get API config:', e);
     }
   }
-  return configPromise || Promise.resolve();
 }
 
 // Kick off config resolution immediately on module evaluation
 ensureConfigLoaded();
 
 export function getApiBase(): string {
-  return currentApiBase || (window.location.origin.includes('3000') || window.location.origin.includes('5173') ? 'http://127.0.0.1:4000/api' : '/api');
+  if (currentApiBase) return currentApiBase;
+  if (typeof window !== 'undefined') {
+    if (window.location.origin.includes('3000') || window.location.origin.includes('5173')) {
+      return 'http://127.0.0.1:4000/api';
+    }
+    if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+      return '/api';
+    }
+  }
+  return '';
 }
 
 export function getStoredToken(): string | null {
@@ -58,6 +62,10 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
   }
 
   const base = getApiBase();
+  if (!base && !endpoint.startsWith('http')) {
+    throw new Error('جاري تشغيل محرك النظام وقاعدة البيانات المحلية. يرجى الانتظار...');
+  }
+
   const url = endpoint.startsWith('http') ? endpoint : `${base}${endpoint}`;
 
   const res = await fetch(url, {

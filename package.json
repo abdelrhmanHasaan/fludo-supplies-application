@@ -15,7 +15,10 @@
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:ui\"",
     "build:api": "npm --workspace=services/api run build",
     "build:ui": "npm --workspace=apps/ui run build",
-    "build": "npm run build:api && npm run build:ui",
+    "build:desktop": "npm --workspace=apps/desktop run build:main",
+    "build": "npm run build:api && npm run build:ui && npm run build:desktop",
+    "stage": "node scripts/prepare_package.cjs",
+    "pack": "npm run build && npm run stage && npm --workspace=apps/desktop run pack:exe",
     "test": "npm --workspace=services/api test"
   },
   "devDependencies": {

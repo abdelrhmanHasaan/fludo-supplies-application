@@ -7,15 +7,40 @@ export interface TxContext {
   editApprovalId?: string;
 }
 
-export const pool = new Pool({
-  host: process.env.PGHOST || '127.0.0.1',
-  port: parseInt(process.env.PGPORT || '5433', 10),
-  database: process.env.PGDATABASE || 'fludo_erp',
-  user: process.env.PGUSER || 'erp_owner',
-  password: process.env.PGPASSWORD || '',
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+let activePool: pg.Pool | null = null;
+
+export function resetPool(): void {
+  if (activePool) {
+    try {
+      activePool.end().catch(() => {});
+    } catch {}
+    activePool = null;
+  }
+}
+
+export function getPool(): pg.Pool {
+  if (!activePool) {
+    const port = parseInt(process.env.PGPORT || '5433', 10);
+    activePool = new Pool({
+      host: process.env.PGHOST || '127.0.0.1',
+      port,
+      database: process.env.PGDATABASE || 'fludo_erp',
+      user: process.env.PGUSER || 'erp_owner',
+      password: process.env.PGPASSWORD || '',
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    });
+  }
+  return activePool;
+}
+
+export const pool = new Proxy({} as pg.Pool, {
+  get(_target, prop) {
+    const p = getPool();
+    const val = (p as any)[prop];
+    return typeof val === 'function' ? val.bind(p) : val;
+  },
 });
 
 export async function withTransaction<T>(
