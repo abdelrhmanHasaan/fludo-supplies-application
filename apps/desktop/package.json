@@ -1,6 +1,6 @@
 {
   "name": "fludo-supplies-erp",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Building-Materials Yard ERP for Fludo Supplies",
   "main": "dist/main.js",
   "author": "Fludo Supplies",

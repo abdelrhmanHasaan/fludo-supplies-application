@@ -174,7 +174,7 @@ async function start() {
 
   const healthHandler = async () => ({
     status: 'healthy',
-    version: '1.4.0',
+    version: '1.5.0',
     time: new Date().toISOString(),
   });
   fastify.get('/health', healthHandler);

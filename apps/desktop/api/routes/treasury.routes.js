@@ -62,6 +62,23 @@ const treasuryRoutes = async (fastify) => {
             return reply.status(404).send({ error: 'الحساب غير موجود' });
         return res.rows[0];
     });
+    // 3.5 Delete Cash / Bank Account (Soft Delete)
+    fastify.delete('/accounts/:id', async (req, reply) => {
+        const { id } = req.params;
+        try {
+            const accRes = await db_js_1.pool.query(`SELECT id, name FROM app.cash_accounts WHERE id = $1 AND NOT is_deleted`, [id]);
+            if (accRes.rows.length === 0) {
+                return reply.status(404).send({ error: 'الحساب أو الخزينة غير موجودة أو تم حذفها مسبقاً' });
+            }
+            await db_js_1.pool.query(`UPDATE app.cash_accounts
+         SET is_deleted = true, is_active = false, deleted_at = now(), updated_at = now()
+         WHERE id = $1`, [id]);
+            return { success: true, message: `تم حذف حساب/خزينة "${accRes.rows[0].name}" بنجاح` };
+        }
+        catch (err) {
+            return reply.status(500).send({ error: err.message || 'فشل حذف الخزينة' });
+        }
+    });
     // 4. Detailed Account Statement
     fastify.get('/accounts/:id/statement', async (req, reply) => {
         const { id } = req.params;

@@ -74,7 +74,7 @@ process.on('unhandledRejection', (reason: any) => {
   logDesktop(`[FATAL REJECTION] ${reason?.stack || reason?.message || reason}`);
 });
 
-logDesktop(`=== APP LAUNCH (PID: ${process.pid}, version: 1.4.0) ===`);
+logDesktop(`=== APP LAUNCH (PID: ${process.pid}, version: 1.5.0) ===`);
 
 // 1. Single Instance Lock (Requirement 4)
 const gotTheLock = app.requestSingleInstanceLock();

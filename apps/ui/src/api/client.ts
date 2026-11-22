@@ -175,6 +175,7 @@ export const api = {
   getCashAccounts: () => apiFetch<any[]>('/treasury/accounts'),
   createCashAccount: (data: any) => apiFetch<any>('/treasury/accounts', { method: 'POST', body: JSON.stringify(data) }),
   toggleCashAccountActive: (id: string) => apiFetch<any>(`/treasury/accounts/${id}/toggle-active`, { method: 'PUT' }),
+  deleteCashAccount: (id: string) => apiFetch<any>(`/treasury/accounts/${id}`, { method: 'DELETE' }),
   getCashAccountStatement: (id: string) => apiFetch<any>(`/treasury/accounts/${id}/statement`),
   transferCash: (data: any) => apiFetch<any>('/treasury/transfer', { method: 'POST', body: JSON.stringify(data) }),
   recordCashCount: (data: any) => apiFetch<any>('/treasury/count', { method: 'POST', body: JSON.stringify(data) }),

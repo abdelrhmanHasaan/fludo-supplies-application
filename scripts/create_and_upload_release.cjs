@@ -4,10 +4,10 @@ const https = require('https');
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const REPO = 'abdelrhmanHasaan/fludo-supplies-application';
-const TAG = 'v1.4.0';
-const RELEASE_NAME = 'Fludo Supplies ERP v1.4.0 — Standalone Windows Installer';
-const FILE_PATH = path.resolve(__dirname, '../installer/Fludo Supplies ERP Setup 1.4.0.exe');
-const FILE_NAME = 'Fludo Supplies ERP Setup 1.4.0.exe';
+const TAG = 'v1.5.0';
+const RELEASE_NAME = 'Fludo Supplies ERP v1.5.0 — Standalone Windows Installer';
+const FILE_PATH = path.resolve(__dirname, '../installer/Fludo Supplies ERP Setup 1.5.0.exe');
+const FILE_NAME = 'Fludo Supplies ERP Setup 1.5.0.exe';
 
 function apiRequest(method, endpoint, body) {
   return new Promise((resolve, reject) => {
@@ -71,7 +71,7 @@ async function main() {
     console.log(`Found existing release (ID: ${release.id})`);
   } catch {
     console.log(`Creating fresh release for tag '${TAG}'...`);
-    const releaseBody = `## Fludo Supplies ERP v1.4.0
+    const releaseBody = `## Fludo Supplies ERP v1.5.0
 ### Standalone Windows Edition (No Admin, Zero Fixed Ports, Portable DB)
 
 ### Key Improvements:

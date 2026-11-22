@@ -37,22 +37,29 @@ const paymentsRoutes = async (fastify) => {
     // Record Payment / Collection
     fastify.post('/', async (req, reply) => {
         const body = req.body;
-        if (!body.amount || body.amount <= 0) {
+        if (!body.amount || parseFloat(body.amount) <= 0) {
             return reply.status(400).send({ error: 'يرجى إدخال مبلغ صحيح' });
         }
-        const paymentId = await (0, db_js_1.withTransaction)(async (client) => {
-            return await (0, payments_js_1.recordPayment)(client, {
-                paymentType: body.paymentType || 'customer_receipt',
-                partyId: body.partyId,
-                paymentDate: body.paymentDate || new Date().toISOString().split('T')[0],
-                amount: body.amount,
-                paymentMethod: body.paymentMethod || 'cash',
-                driverName: body.driverName,
-                notes: body.notes,
-                allocations: body.allocations,
+        try {
+            const paymentId = await (0, db_js_1.withTransaction)(async (client) => {
+                const pType = body.paymentType || (body.direction === 'out' ? 'supplier_payment' : 'customer_receipt');
+                return await (0, payments_js_1.recordPayment)(client, {
+                    paymentType: pType,
+                    partyId: body.partyId || body.party_id,
+                    paymentDate: body.paymentDate || body.payment_date || new Date().toISOString().split('T')[0],
+                    amount: parseFloat(body.amount),
+                    paymentMethod: body.paymentMethod || 'cash',
+                    cashAccountId: body.cashAccountId || body.cash_account_id,
+                    driverName: body.driverName || body.driver_name,
+                    notes: body.notes,
+                    allocations: body.allocations,
+                });
             });
-        });
-        return { status: 'created', paymentId };
+            return { status: 'created', paymentId };
+        }
+        catch (err) {
+            return reply.status(400).send({ error: err.message || 'فشل تسجيل المعاملة' });
+        }
     });
 };
 exports.paymentsRoutes = paymentsRoutes;

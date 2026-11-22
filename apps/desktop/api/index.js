@@ -142485,22 +142485,28 @@ var paymentsRoutes = async (fastify2) => {
   });
   fastify2.post("/", async (req, reply) => {
     const body = req.body;
-    if (!body.amount || body.amount <= 0) {
+    if (!body.amount || parseFloat(body.amount) <= 0) {
       return reply.status(400).send({ error: "\u064A\u0631\u062C\u0649 \u0625\u062F\u062E\u0627\u0644 \u0645\u0628\u0644\u063A \u0635\u062D\u064A\u062D" });
     }
-    const paymentId = await withTransaction(async (client) => {
-      return await recordPayment(client, {
-        paymentType: body.paymentType || "customer_receipt",
-        partyId: body.partyId,
-        paymentDate: body.paymentDate || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
-        amount: body.amount,
-        paymentMethod: body.paymentMethod || "cash",
-        driverName: body.driverName,
-        notes: body.notes,
-        allocations: body.allocations
+    try {
+      const paymentId = await withTransaction(async (client) => {
+        const pType = body.paymentType || (body.direction === "out" ? "supplier_payment" : "customer_receipt");
+        return await recordPayment(client, {
+          paymentType: pType,
+          partyId: body.partyId || body.party_id,
+          paymentDate: body.paymentDate || body.payment_date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+          amount: parseFloat(body.amount),
+          paymentMethod: body.paymentMethod || "cash",
+          cashAccountId: body.cashAccountId || body.cash_account_id,
+          driverName: body.driverName || body.driver_name,
+          notes: body.notes,
+          allocations: body.allocations
+        });
       });
-    });
-    return { status: "created", paymentId };
+      return { status: "created", paymentId };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message || "\u0641\u0634\u0644 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u0645\u0639\u0627\u0645\u0644\u0629" });
+    }
   });
 };
 
@@ -142706,6 +142712,27 @@ var treasuryRoutes = async (fastify2) => {
     );
     if (res.rows.length === 0) return reply.status(404).send({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
     return res.rows[0];
+  });
+  fastify2.delete("/accounts/:id", async (req, reply) => {
+    const { id } = req.params;
+    try {
+      const accRes = await pool.query(
+        `SELECT id, name FROM app.cash_accounts WHERE id = $1 AND NOT is_deleted`,
+        [id]
+      );
+      if (accRes.rows.length === 0) {
+        return reply.status(404).send({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u0623\u0648 \u0627\u0644\u062E\u0632\u064A\u0646\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629 \u0623\u0648 \u062A\u0645 \u062D\u0630\u0641\u0647\u0627 \u0645\u0633\u0628\u0642\u0627\u064B" });
+      }
+      await pool.query(
+        `UPDATE app.cash_accounts
+         SET is_deleted = true, is_active = false, deleted_at = now(), updated_at = now()
+         WHERE id = $1`,
+        [id]
+      );
+      return { success: true, message: `\u062A\u0645 \u062D\u0630\u0641 \u062D\u0633\u0627\u0628/\u062E\u0632\u064A\u0646\u0629 "${accRes.rows[0].name}" \u0628\u0646\u062C\u0627\u062D` };
+    } catch (err) {
+      return reply.status(500).send({ error: err.message || "\u0641\u0634\u0644 \u062D\u0630\u0641 \u0627\u0644\u062E\u0632\u064A\u0646\u0629" });
+    }
   });
   fastify2.get("/accounts/:id/statement", async (req, reply) => {
     const { id } = req.params;
@@ -145500,7 +145527,7 @@ async function start() {
   });
   const healthHandler = async () => ({
     status: "healthy",
-    version: "1.4.0",
+    version: "1.5.0",
     time: (/* @__PURE__ */ new Date()).toISOString()
   });
   fastify.get("/health", healthHandler);

@@ -23,6 +23,7 @@ import {
   X,
   Tag,
   AlertCircle,
+  Plus,
 } from 'lucide-react';
 
 interface PartyDetailsProps {
@@ -47,6 +48,16 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
   // Collapsible year/month state
   const [openYears, setOpenYears] = useState<Record<string, boolean>>({});
   const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({});
+
+  // New transaction modal
+  const [showAddTxModal, setShowAddTxModal] = useState(false);
+  const [txAmount, setTxAmount] = useState<number | ''>('');
+  const [txCashAccountId, setTxCashAccountId] = useState('');
+  const [txDate, setTxDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [txDriver, setTxDriver] = useState('');
+  const [txNotes, setTxNotes] = useState('');
+  const [txLoading, setTxLoading] = useState(false);
+  const [txError, setTxError] = useState('');
 
   // PIN edit modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -76,6 +87,10 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
       setActivities(actRes || []);
       setCashAccounts(caRes || []);
 
+      if (caRes && caRes.length > 0) {
+        setTxCashAccountId((prev) => prev || caRes.find((c: any) => c.is_active)?.id || caRes[0].id);
+      }
+
       if (sumRes) {
         setEditName(sumRes.party_name || '');
         setEditPhone(sumRes.party_phone || '');
@@ -90,6 +105,45 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
       console.error('Failed to load party details:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveTransaction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTxError('');
+    const amt = Number(txAmount);
+    if (!amt || amt <= 0) {
+      setTxError('يرجى إدخال مبلغ صحيح أكبر من الصفر');
+      return;
+    }
+    if (!txCashAccountId) {
+      setTxError('يرجى اختيار الخزينة أو الحساب النقدي');
+      return;
+    }
+
+    setTxLoading(true);
+    try {
+      await api.recordPayment({
+        paymentType: isCustomer ? 'customer_receipt' : 'supplier_payment',
+        direction: isCustomer ? 'in' : 'out',
+        partyId,
+        paymentDate: txDate,
+        amount: amt,
+        paymentMethod: 'cash',
+        cashAccountId: txCashAccountId,
+        driverName: txDriver || undefined,
+        notes: txNotes || undefined,
+      });
+
+      setShowAddTxModal(false);
+      setTxAmount('');
+      setTxNotes('');
+      setTxDriver('');
+      loadAllData();
+    } catch (err: any) {
+      setTxError(err.message || 'فشل تسجيل المعاملة');
+    } finally {
+      setTxLoading(false);
     }
   };
 
@@ -305,6 +359,13 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowAddTxModal(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow-md shadow-blue-500/20 transition-all active:scale-95"
+          >
+            <Plus className="w-4 h-4" />
+            <span>{isCustomer ? 'إضافة تحصيل / دفعة' : 'إضافة سداد / دفعة'}</span>
+          </button>
           <button
             onClick={() => setShowEditModal(true)}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 text-sm font-bold transition-all active:scale-95"
@@ -525,7 +586,7 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
 
       {/* C) سجل المعاملات الكامل: هرم قابل للطي (سنة ← شهر ← يوم ← معاملات) */}
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/80 space-y-6">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
               <Calendar className="w-5 h-5" />
@@ -537,6 +598,13 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
               </p>
             </div>
           </div>
+          <button
+            onClick={() => setShowAddTxModal(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all active:scale-95 shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>تسجيل معاملة في هذا السجل</span>
+          </button>
         </div>
 
         {activities.length === 0 ? (
@@ -622,37 +690,52 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
                                               {dayData.items.map((it: any) => (
                                                 <div
                                                   key={it.document_id + it.activity_type}
-                                                  className="p-3 rounded-xl bg-slate-50/70 hover:bg-slate-100/80 border border-slate-200/60 flex flex-col md:flex-row md:items-center justify-between gap-3 text-sm transition-colors"
+                                                  className="p-3.5 rounded-xl bg-slate-50/70 hover:bg-slate-100/80 border border-slate-200/60 flex flex-col md:flex-row md:items-center justify-between gap-3 text-sm transition-colors"
                                                 >
-                                                  <div className="flex items-center gap-3">
+                                                  <div className="flex flex-wrap items-center gap-2.5">
                                                     {getActivityBadge(it.activity_type)}
-                                                    <span className="font-bold text-slate-800">
+                                                    <span className="font-bold text-slate-800 font-mono text-xs">
                                                       {it.document_no}
                                                     </span>
-                                                    <span className="text-slate-600 text-xs">
+                                                    {it.document_id && it.activity_type.includes('sale') && onOpenInvoice && (
+                                                      <button
+                                                        onClick={() => onOpenInvoice(it.document_id)}
+                                                        className="text-[11px] text-blue-600 hover:text-blue-800 font-bold hover:underline flex items-center gap-1"
+                                                        title="عرض تفاصيل الفاتورة"
+                                                      >
+                                                        <FileText className="w-3 h-3" />
+                                                        <span>عرض</span>
+                                                      </button>
+                                                    )}
+                                                    <span className="text-slate-700 text-xs font-medium">
                                                       {it.description}
                                                     </span>
                                                     {it.cash_account_id && (
-                                                      <span className="text-xs px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 flex items-center gap-1">
+                                                      <span className="text-[11px] px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-100 font-bold flex items-center gap-1">
                                                         <Wallet className="w-3 h-3" />
-                                                        {cashAccountMap.get(it.cash_account_id) || 'خزينة'}
+                                                        <span>{cashAccountMap.get(it.cash_account_id) || 'خزينة نقدية'}</span>
+                                                      </span>
+                                                    )}
+                                                    {it.occurred_at && (
+                                                      <span className="text-[10px] text-slate-400 font-mono">
+                                                        {new Date(it.occurred_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
                                                       </span>
                                                     )}
                                                   </div>
 
-                                                  <div className="flex items-center gap-6 text-left">
+                                                  <div className="flex items-center gap-5 text-left shrink-0">
                                                     {Number(it.amount_debit || 0) > 0 && (
-                                                      <div className="text-emerald-700 font-bold">
+                                                      <div className="text-emerald-700 font-black text-sm">
                                                         + {formatMoney(it.amount_debit)}
                                                       </div>
                                                     )}
                                                     {Number(it.amount_credit || 0) > 0 && (
-                                                      <div className="text-rose-700 font-bold">
+                                                      <div className="text-rose-700 font-black text-sm">
                                                         - {formatMoney(it.amount_credit)}
                                                       </div>
                                                     )}
-                                                    <div className="text-xs text-slate-400">
-                                                      الرصيد بعدها: <strong className="text-slate-900 font-black">{formatMoney(it.running_balance)}</strong>
+                                                    <div className="text-xs text-slate-500 font-bold">
+                                                      الرصيد: <strong className="text-slate-900 font-black">{formatMoney(it.running_balance)}</strong>
                                                     </div>
                                                   </div>
                                                 </div>
@@ -769,6 +852,135 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
                 className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold shadow-md shadow-blue-500/20 active:scale-95 transition-all"
               >
                 {editLoading ? 'جاري التحقق...' : 'تأكيد التعديل'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {/* Modal: إضافة معاملة / دفعة جديدة */}
+      {showAddTxModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in">
+          <form
+            onSubmit={handleSaveTransaction}
+            className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden space-y-4 p-6"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                  <Wallet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base text-slate-800">
+                    {isCustomer ? 'تسجيل دفعة / تحصيل من العميل' : 'تسجيل دفعة / سداد للمورد'}
+                  </h3>
+                  <span className="text-xs text-slate-400">
+                    الطرف: <strong>{summary?.party_name}</strong>
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddTxModal(false)}
+                className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-400"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {txError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{txError}</span>
+              </div>
+            )}
+
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">المبلغ المطلوب تسجيله (ج.م) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    value={txAmount}
+                    onChange={(e) => setTxAmount(e.target.value === '' ? '' : parseFloat(e.target.value))}
+                    placeholder="0.00"
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 font-black text-base text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">تاريخ المعاملة *</label>
+                  <input
+                    type="date"
+                    required
+                    value={txDate}
+                    onChange={(e) => setTxDate(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">الخزينة أو الحساب النقدي المستلم/المنصرف منه *</label>
+                {cashAccounts.length === 0 ? (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-bold">
+                    لا توجد خزائن أو حسابات نقدية مسجلة. يرجى إضافة خزينة أولاً من شاشة الخزينة.
+                  </div>
+                ) : (
+                  <select
+                    value={txCashAccountId}
+                    onChange={(e) => setTxCashAccountId(e.target.value)}
+                    required
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+                    <option value="" disabled>اختر الخزينة / الحساب...</option>
+                    {cashAccounts.map((ca: any) => (
+                      <option key={ca.id} value={ca.id} disabled={!ca.is_active}>
+                        {ca.name} {ca.kind ? `(${ca.kind})` : ''} — الرصيد: {Number(ca.balance || 0).toLocaleString()} ج.م {!ca.is_active ? ' (معطلة)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">السائق أو المندوب المستلم (اختياري)</label>
+                <input
+                  type="text"
+                  value={txDriver}
+                  onChange={(e) => setTxDriver(e.target.value)}
+                  placeholder="مثال: أحمد عبد الله (سائق سيارة 4521)"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">البيان / ملاحظات المعاملة</label>
+                <textarea
+                  rows={2}
+                  value={txNotes}
+                  onChange={(e) => setTxNotes(e.target.value)}
+                  placeholder="اكتب أي تفاصيل إضافية عن الدفعة أو الشيك أو طريقة السداد..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowAddTxModal(false)}
+                className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 text-xs font-bold"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                disabled={txLoading || cashAccounts.length === 0}
+                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-md shadow-blue-500/25 active:scale-95 transition-all disabled:opacity-50"
+              >
+                {txLoading ? 'جاري الحفظ والترحيل...' : isCustomer ? 'تأكيد وحفظ سند القبض' : 'تأكيد وحفظ سند الصرف'}
               </button>
             </div>
           </form>

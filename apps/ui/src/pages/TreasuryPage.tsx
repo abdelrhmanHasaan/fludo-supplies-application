@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   Lock,
   Power,
+  Trash2,
   RefreshCw,
 } from 'lucide-react';
 
@@ -102,6 +103,18 @@ export const TreasuryPage: React.FC = () => {
       loadAccounts();
     } catch (err: any) {
       alert(err.message || 'فشل تغيير حالة الحساب');
+    }
+  };
+
+  const handleDeleteAccount = async (acc: any) => {
+    const ok = window.confirm(`هل أنت متأكد من حذف حساب/خزينة "${acc.name}" نهائياً من النظام؟\nلن يظهر في قائمة الخزائن مرة أخرى.`);
+    if (!ok) return;
+
+    try {
+      await api.deleteCashAccount(acc.id);
+      loadAccounts();
+    } catch (err: any) {
+      alert(err.message || 'فشل حذف الخزينة');
     }
   };
 
@@ -292,15 +305,24 @@ export const TreasuryPage: React.FC = () => {
                         </span>
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleToggleActive(acc)}
-                      className={`p-2 rounded-xl transition-colors ${
-                        acc.is_active ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
-                      }`}
-                      title={acc.is_active ? 'تعطيل الحساب' : 'تفعيل الحساب'}
-                    >
-                      <Power className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleToggleActive(acc)}
+                        className={`p-2 rounded-xl transition-colors ${
+                          acc.is_active ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                        }`}
+                        title={acc.is_active ? 'تعطيل الحساب' : 'تفعيل الحساب'}
+                      >
+                        <Power className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteAccount(acc)}
+                        className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                        title="حذف الخزينة نهائياً"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="pt-2">
