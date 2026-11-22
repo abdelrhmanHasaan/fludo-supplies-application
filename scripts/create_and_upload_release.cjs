@@ -71,7 +71,7 @@ async function main() {
     console.log(`Found existing release (ID: ${release.id})`);
   } catch {
     console.log(`Creating fresh release for tag '${TAG}'...`);
-    const releaseBody = `## Fludo Supplies ERP v1.4.0 (شركة الرضا للتوريدات)
+    const releaseBody = `## Fludo Supplies ERP v1.4.0
 ### Standalone Windows Edition (No Admin, Zero Fixed Ports, Portable DB)
 
 ### Key Improvements:
@@ -96,14 +96,19 @@ async function main() {
 
   // 2. Check if asset already exists in release
   console.log(`\n[2/3] Checking existing assets...`);
-  if (release.assets && release.assets.length > 0) {
-    for (const asset of release.assets) {
-      if (asset.name === FILE_NAME) {
-        console.log(`Asset '${FILE_NAME}' already exists (ID: ${asset.id}). Deleting old asset...`);
-        await apiRequest('DELETE', `/repos/${REPO}/releases/assets/${asset.id}`);
-        console.log('Old asset removed.');
+  try {
+    const assets = await apiRequest('GET', `/repos/${REPO}/releases/${release.id}/assets`);
+    if (Array.isArray(assets) && assets.length > 0) {
+      for (const asset of assets) {
+        if (asset.name.toLowerCase().includes('1.4.0') || asset.name.toLowerCase().endsWith('.exe')) {
+          console.log(`Deleting existing release asset '${asset.name}' (ID: ${asset.id})...`);
+          await apiRequest('DELETE', `/repos/${REPO}/releases/assets/${asset.id}`);
+          console.log('Old asset removed successfully.');
+        }
       }
     }
+  } catch (checkErr) {
+    console.warn('Notice while checking existing assets:', checkErr.message);
   }
 
   // 3. Upload binary asset directly to upload_url

@@ -26,14 +26,14 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     return {
       initialized: count > 0,
       userCount: totalCount,
-      companyName: compRes.rows[0]?.name_ar || 'شركة الرضا للتوريدات',
+      companyName: compRes.rows[0]?.name_ar || 'Fludo Supplies',
       adminName: userRes.rows[0]?.full_name || 'مدير النظام',
     };
   });
 
   // First-run setup wizard: create initial admin & company profile
   fastify.post('/setup', async (req, reply) => {
-    const { companyName, adminFullName, username, password, managerPin } = req.body as any;
+    const { companyName, ownerName, adminFullName, username, password, managerPin } = req.body as any;
 
     // Check if system is already initialized with an active logged-in user
     const checkUsers = await pool.query(
@@ -67,10 +67,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     const pinHash = await hashSecret(cleanPin);
 
     const result = await withTransaction(async (client) => {
-      // 1. Update company profile name
+      // 1. Update company profile name and owner
       await client.query(
-        `UPDATE app.company_profile SET name_ar = $1, updated_at = NOW()`,
-        [cleanCompanyName]
+        `UPDATE app.company_profile SET name_ar = $1, owner_name = $2, updated_at = NOW()`,
+        [cleanCompanyName, (ownerName || cleanFullName || '').trim()]
       );
 
       // Clean up any unauthenticated placeholder users

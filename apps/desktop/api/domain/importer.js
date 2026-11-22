@@ -7,6 +7,50 @@ exports.parseExcelWorkbook = parseExcelWorkbook;
 exports.commitImportedData = commitImportedData;
 const exceljs_1 = __importDefault(require("exceljs"));
 const accounting_js_1 = require("./accounting.js");
+function parseCellNumber(val) {
+    if (!val)
+        return 0;
+    if (typeof val === 'number')
+        return isNaN(val) ? 0 : val;
+    if (typeof val === 'object' && val.result !== undefined) {
+        const num = parseFloat(val.result);
+        return isNaN(num) ? 0 : num;
+    }
+    const clean = val.toString().replace(/,/g, '').trim();
+    const num = parseFloat(clean);
+    return isNaN(num) ? 0 : num;
+}
+function parseCellString(val) {
+    if (!val)
+        return '';
+    if (typeof val === 'object' && val.result !== undefined) {
+        return val.result ? val.result.toString().trim() : '';
+    }
+    return val.toString().trim();
+}
+function parseCellDate(val) {
+    if (!val)
+        return undefined;
+    if (val instanceof Date) {
+        return val.toISOString().slice(0, 10);
+    }
+    const str = parseCellString(val);
+    if (!str)
+        return undefined;
+    // Check if DD/MM/YYYY or YYYY-MM-DD
+    if (str.includes('/')) {
+        const parts = str.split('/');
+        if (parts.length === 3) {
+            const p0 = parseInt(parts[0], 10);
+            const p1 = parseInt(parts[1], 10);
+            const p2 = parseInt(parts[2], 10);
+            if (p2 > 1000) {
+                return `${p2}-${String(p1).padStart(2, '0')}-${String(p0).padStart(2, '0')}`;
+            }
+        }
+    }
+    return str.slice(0, 10);
+}
 async function parseExcelWorkbook(buffer) {
     const workbook = new exceljs_1.default.Workbook();
     // @ts-ignore
@@ -15,294 +59,320 @@ async function parseExcelWorkbook(buffer) {
         customersFound: [],
         suppliersFound: [],
         productsFound: [],
+        employeesFound: [],
+        equipmentFound: [],
         totals: {
             customerPurchases: 0,
             customerPaid: 0,
+            customerRemaining: 0,
             supplierPurchases: 0,
             supplierPaid: 0,
+            supplierRemaining: 0,
+            salesLinesCount: 0,
+            paymentsCount: 0,
         },
         warnings: [],
     };
-    // Helper: Try to parse sheet by column headers
-    const parseTableByHeaders = (sheet) => {
-        let headerRowIdx = -1;
-        const colMap = {};
-        sheet.eachRow((row, rowIdx) => {
-            if (headerRowIdx !== -1)
-                return;
-            row.eachCell((cell, colIdx) => {
-                const val = cell.value?.toString().trim().toLowerCase() || '';
-                if (val.includes('اسم العميل') ||
-                    val.includes('اسم الصنف') ||
-                    val.includes('اسم المورد') ||
-                    val === 'العميل' ||
-                    val === 'الصنف' ||
-                    val === 'المورد' ||
-                    val === 'customer' ||
-                    val === 'product' ||
-                    val === 'supplier') {
-                    headerRowIdx = rowIdx;
+    // 1. Settings Sheet (الاعدادات)
+    const settingsSheet = workbook.getWorksheet('الاعدادات') || workbook.getWorksheet('الأعدادات') || workbook.getWorksheet('Settings');
+    if (settingsSheet) {
+        settingsSheet.eachRow((row, rowNumber) => {
+            if (rowNumber >= 2) {
+                const prodName = parseCellString(row.getCell(2).value);
+                const prodUnit = parseCellString(row.getCell(3).value);
+                const prodCode = parseCellString(row.getCell(4).value);
+                const prodPrice = parseCellNumber(row.getCell(5).value);
+                if (prodName && prodName !== 'اسم الصنف' && !preview.productsFound.some((p) => p.name === prodName)) {
+                    preview.productsFound.push({
+                        code: prodCode || undefined,
+                        name: prodName,
+                        unit: prodUnit || undefined,
+                        price: prodPrice,
+                    });
                 }
-            });
-            if (headerRowIdx === rowIdx) {
-                row.eachCell((cell, colIdx) => {
-                    const val = cell.value?.toString().trim().toLowerCase() || '';
-                    if (val.includes('اسم العميل') || val === 'العميل' || val.includes('customer'))
-                        colMap['customer_name'] = colIdx;
-                    if (val.includes('اسم المورد') || val === 'المورد' || val.includes('supplier'))
-                        colMap['supplier_name'] = colIdx;
-                    if (val.includes('اسم الصنف') || val === 'الصنف' || val.includes('المنتج') || val.includes('product'))
-                        colMap['product_name'] = colIdx;
-                    if (val.includes('كود') || val.includes('code'))
-                        colMap['code'] = colIdx;
-                    if (val.includes('هاتف') || val.includes('تليفون') || val.includes('موبايل') || val.includes('phone'))
-                        colMap['phone'] = colIdx;
-                    if (val.includes('وحد') || val.includes('unit'))
-                        colMap['unit'] = colIdx;
-                    if (val.includes('سعر') || val.includes('price'))
-                        colMap['price'] = colIdx;
-                    if (val.includes('رصيد') || val.includes('balance'))
-                        colMap['balance'] = colIdx;
-                });
-            }
-        });
-        if (headerRowIdx === -1)
-            return false;
-        let foundAny = false;
-        sheet.eachRow((row, rowIdx) => {
-            if (rowIdx <= headerRowIdx)
-                return;
-            // Check for Customer
-            if (colMap['customer_name']) {
-                const name = row.getCell(colMap['customer_name']).value?.toString().trim();
-                if (name && name !== 'اسم العميل' && name !== 'العميل') {
-                    const phone = colMap['phone'] ? row.getCell(colMap['phone']).value?.toString().trim() : undefined;
-                    const balVal = colMap['balance'] ? parseFloat(row.getCell(colMap['balance']).value?.toString() || '0') : 0;
-                    const balance = isNaN(balVal) ? 0 : balVal;
-                    if (!preview.customersFound.some((c) => c.name === name)) {
-                        preview.customersFound.push({ name, phone, totalPurchases: balance > 0 ? balance : 0, totalPaid: balance < 0 ? Math.abs(balance) : 0, balance });
-                        foundAny = true;
-                    }
+                // Employees in Settings (Col 8 = Name, 9 = Job, 10 = Rate)
+                const empName = parseCellString(row.getCell(8).value);
+                const empJob = parseCellString(row.getCell(9).value);
+                const empRate = parseCellNumber(row.getCell(10).value);
+                if (empName && empName !== 'اسم الموظف' && !preview.employeesFound.some((e) => e.name === empName)) {
+                    preview.employeesFound.push({
+                        name: empName,
+                        jobTitle: empJob || undefined,
+                        dailyRate: empRate,
+                    });
                 }
-            }
-            // Check for Supplier
-            if (colMap['supplier_name']) {
-                const name = row.getCell(colMap['supplier_name']).value?.toString().trim();
-                if (name && name !== 'اسم المورد' && name !== 'المورد') {
-                    const balVal = colMap['balance'] ? parseFloat(row.getCell(colMap['balance']).value?.toString() || '0') : 0;
-                    const balance = isNaN(balVal) ? 0 : balVal;
-                    if (!preview.suppliersFound.some((s) => s.name === name)) {
-                        preview.suppliersFound.push({ name, totalPurchases: balance, totalPaid: 0, balance });
-                        foundAny = true;
-                    }
-                }
-            }
-            // Check for Product
-            if (colMap['product_name']) {
-                const name = row.getCell(colMap['product_name']).value?.toString().trim();
-                if (name && name !== 'اسم الصنف' && name !== 'الصنف') {
-                    const code = colMap['code'] ? row.getCell(colMap['code']).value?.toString().trim() : undefined;
-                    const unit = colMap['unit'] ? row.getCell(colMap['unit']).value?.toString().trim() : undefined;
-                    const priceVal = colMap['price'] ? parseFloat(row.getCell(colMap['price']).value?.toString() || '0') : 0;
-                    if (!preview.productsFound.some((p) => p.name === name)) {
-                        preview.productsFound.push({ code, name, unit, price: isNaN(priceVal) ? 0 : priceVal });
-                        foundAny = true;
-                    }
+                // Equipment in Settings (Col 14 = Name, 15 = Plate)
+                const eqName = parseCellString(row.getCell(14).value);
+                const eqPlate = parseCellString(row.getCell(15).value);
+                if (eqName && eqName !== 'اسم المعدة' && !preview.equipmentFound.some((eq) => eq.name === eqName)) {
+                    preview.equipmentFound.push({
+                        name: eqName,
+                        plateNo: eqPlate || undefined,
+                    });
                 }
             }
         });
-        return foundAny;
-    };
-    // Try parsing each worksheet by standard headers first
-    workbook.eachSheet((sheet) => {
-        parseTableByHeaders(sheet);
-    });
-    // If table headers were not found, fallback to the legacy multi-cell daily workbook layout
-    if (preview.productsFound.length === 0) {
-        const settingsSheet = workbook.getWorksheet('الاعدادات') || workbook.getWorksheet('الأعدادات') || workbook.getWorksheet('Settings');
-        if (settingsSheet) {
-            settingsSheet.eachRow((row, rowNumber) => {
-                if (rowNumber >= 2) {
-                    const nameVal = row.getCell(2).value?.toString().trim();
-                    const unitVal = row.getCell(3).value?.toString().trim();
-                    const codeVal = row.getCell(4).value?.toString().trim();
-                    const priceVal = parseFloat(row.getCell(5).value?.toString() || '0');
-                    if (nameVal && nameVal !== 'اسم الصنف') {
-                        preview.productsFound.push({
-                            code: codeVal,
-                            name: nameVal,
-                            unit: unitVal,
-                            price: isNaN(priceVal) ? 0 : priceVal,
-                        });
-                    }
+    }
+    // 2. Customers Sheet (حسابات العملاء)
+    const custSheet = workbook.getWorksheet('حسابات العملاء') || workbook.getWorksheet('العملاء');
+    if (custSheet) {
+        const blockStarts = [];
+        custSheet.eachRow((row, rowIdx) => {
+            const cellC = parseCellString(row.getCell(3).value);
+            if (cellC === 'اسم العميل') {
+                blockStarts.push(rowIdx);
+            }
+        });
+        for (let bIdx = 0; bIdx < blockStarts.length; bIdx++) {
+            const startRow = blockStarts[bIdx];
+            const endRow = bIdx + 1 < blockStarts.length ? blockStarts[bIdx + 1] - 1 : custSheet.rowCount;
+            const headerRow = custSheet.getRow(startRow);
+            const name = parseCellString(headerRow.getCell(4).value);
+            if (!name || name === 'undefined')
+                continue;
+            const phone = parseCellString(headerRow.getCell(6).value) || undefined;
+            const category = parseCellString(headerRow.getCell(8).value) || undefined;
+            const startDate = parseCellDate(headerRow.getCell(12).value);
+            const sumRow = custSheet.getRow(startRow + 5);
+            const purchases = parseCellNumber(sumRow.getCell(3).value);
+            const paid = parseCellNumber(sumRow.getCell(4).value);
+            const remaining = parseCellNumber(sumRow.getCell(5).value);
+            const reservedQty = parseCellNumber(sumRow.getCell(9).value);
+            const salesLines = [];
+            const payments = [];
+            // Scan detailed rows (starts after table header at startRow + 7)
+            for (let r = startRow + 7; r <= endRow; r++) {
+                const row = custSheet.getRow(r);
+                const lineNo = parseCellNumber(row.getCell(3).value);
+                const dateStr = parseCellDate(row.getCell(6).value);
+                const prod = parseCellString(row.getCell(7).value);
+                const unit = parseCellString(row.getCell(8).value);
+                const qty = parseCellNumber(row.getCell(10).value);
+                const price = parseCellNumber(row.getCell(11).value);
+                const advance = parseCellNumber(row.getCell(12).value);
+                const payVal = parseCellNumber(row.getCell(13).value);
+                if (prod && qty > 0) {
+                    salesLines.push({
+                        lineNo: lineNo || salesLines.length + 1,
+                        date: dateStr,
+                        productName: prod,
+                        unitName: unit || undefined,
+                        qty,
+                        unitPrice: price,
+                        total: qty * price,
+                        advancePaid: advance > 0 ? advance : undefined,
+                    });
+                    preview.totals.salesLinesCount++;
                 }
+                if (advance > 0) {
+                    payments.push({
+                        date: dateStr,
+                        amount: advance,
+                        notes: `دفعة مقدمة للعميل ${name}`,
+                    });
+                    preview.totals.paymentsCount++;
+                }
+                if (payVal > 0) {
+                    payments.push({
+                        date: dateStr,
+                        amount: payVal,
+                        notes: `سداد من العميل ${name}`,
+                    });
+                    preview.totals.paymentsCount++;
+                }
+            }
+            preview.customersFound.push({
+                name,
+                phone,
+                category,
+                startDate,
+                totalPurchases: purchases,
+                totalPaid: paid,
+                balance: remaining,
+                reservedQty: reservedQty > 0 ? reservedQty : undefined,
+                salesLines,
+                payments,
             });
+            preview.totals.customerPurchases += purchases;
+            preview.totals.customerPaid += paid;
+            preview.totals.customerRemaining += remaining;
         }
     }
-    if (preview.customersFound.length === 0) {
-        const custSheet = workbook.getWorksheet('حسابات العملاء') || workbook.getWorksheet('العملاء') || workbook.getWorksheet('Customers');
-        if (custSheet) {
-            custSheet.eachRow((row, rowNumber) => {
-                const cellC = row.getCell(3).value?.toString().trim();
-                const cellD = row.getCell(4).value?.toString().trim();
-                if (cellC === 'اسم العميل' && cellD) {
-                    const name = cellD;
-                    const phone = row.getCell(6).value?.toString().trim() || undefined;
-                    const totRow = custSheet.getRow(rowNumber + 5);
-                    const purchVal = parseFloat(totRow.getCell(3).value?.toString() || '0');
-                    const paidVal = parseFloat(totRow.getCell(4).value?.toString() || '0');
-                    const purchases = isNaN(purchVal) ? 0 : purchVal;
-                    const paid = isNaN(paidVal) ? 0 : paidVal;
-                    const balance = purchases - paid;
-                    preview.customersFound.push({ name, phone, totalPurchases: purchases, totalPaid: paid, balance });
-                    preview.totals.customerPurchases += purchases;
-                    preview.totals.customerPaid += paid;
+    // 3. Suppliers Sheet (حسابات الموردين)
+    const suppSheet = workbook.getWorksheet('حسابات الموردين') || workbook.getWorksheet('الموردين');
+    if (suppSheet) {
+        const blockStarts = [];
+        suppSheet.eachRow((row, rowIdx) => {
+            const cellC = parseCellString(row.getCell(3).value);
+            if (cellC === 'اسم المورد') {
+                blockStarts.push(rowIdx);
+            }
+        });
+        for (let bIdx = 0; bIdx < blockStarts.length; bIdx++) {
+            const startRow = blockStarts[bIdx];
+            const endRow = bIdx + 1 < blockStarts.length ? blockStarts[bIdx + 1] - 1 : suppSheet.rowCount;
+            const headerRow = suppSheet.getRow(startRow);
+            const name = parseCellString(headerRow.getCell(4).value);
+            if (!name || name === 'undefined')
+                continue;
+            const phone = parseCellString(headerRow.getCell(6).value) || undefined;
+            const sumRow = suppSheet.getRow(startRow + 5);
+            const purchases = parseCellNumber(sumRow.getCell(3).value);
+            const paid = parseCellNumber(sumRow.getCell(4).value);
+            const remaining = parseCellNumber(sumRow.getCell(5).value);
+            const purchaseLines = [];
+            const payments = [];
+            for (let r = startRow + 7; r <= endRow; r++) {
+                const row = suppSheet.getRow(r);
+                const lineNo = parseCellNumber(row.getCell(3).value);
+                const dateStr = parseCellDate(row.getCell(6).value);
+                const prod = parseCellString(row.getCell(7).value);
+                const unit = parseCellString(row.getCell(8).value);
+                const qty = parseCellNumber(row.getCell(10).value);
+                const price = parseCellNumber(row.getCell(11).value);
+                const payVal = parseCellNumber(row.getCell(12).value);
+                if (prod && qty > 0) {
+                    purchaseLines.push({
+                        lineNo: lineNo || purchaseLines.length + 1,
+                        date: dateStr,
+                        productName: prod,
+                        unitName: unit || undefined,
+                        qty,
+                        unitPrice: price,
+                        total: qty * price,
+                    });
                 }
-            });
-        }
-    }
-    if (preview.suppliersFound.length === 0) {
-        const suppSheet = workbook.getWorksheet('حسابات الموردين') || workbook.getWorksheet('الموردين') || workbook.getWorksheet('Suppliers');
-        if (suppSheet) {
-            suppSheet.eachRow((row, rowNumber) => {
-                const cellC = row.getCell(3).value?.toString().trim();
-                const cellD = row.getCell(4).value?.toString().trim();
-                if (cellC === 'اسم المورد' && cellD) {
-                    const name = cellD;
-                    const totRow = suppSheet.getRow(rowNumber + 5);
-                    const purchVal = parseFloat(totRow.getCell(3).value?.toString() || '0');
-                    const paidVal = parseFloat(totRow.getCell(4).value?.toString() || '0');
-                    const purchases = isNaN(purchVal) ? 0 : purchVal;
-                    const paid = isNaN(paidVal) ? 0 : paidVal;
-                    const balance = purchases - paid;
-                    preview.suppliersFound.push({ name, totalPurchases: purchases, totalPaid: paid, balance });
-                    preview.totals.supplierPurchases += purchases;
-                    preview.totals.supplierPaid += paid;
+                if (payVal > 0) {
+                    payments.push({
+                        date: dateStr,
+                        amount: payVal,
+                        notes: `سداد للمورد ${name}`,
+                    });
                 }
+            }
+            preview.suppliersFound.push({
+                name,
+                phone,
+                totalPurchases: purchases,
+                totalPaid: paid,
+                balance: remaining,
+                purchaseLines,
+                payments,
             });
+            preview.totals.supplierPurchases += purchases;
+            preview.totals.supplierPaid += paid;
+            preview.totals.supplierRemaining += remaining;
         }
     }
     return preview;
 }
-async function commitImportedData(client, preview, importMode = 'opening_balances') {
+async function commitImportedData(client, preview, mode = 'opening_balances') {
     let customersCreated = 0;
     let suppliersCreated = 0;
     let productsCreated = 0;
-    // 1. Commit Products
+    let employeesCreated = 0;
+    // 1. Products
     for (const p of preview.productsFound) {
-        let unitId = null;
-        if (p.unit) {
-            const uRes = await client.query('SELECT id FROM app.units WHERE name = $1', [p.unit]);
-            if (uRes.rows.length > 0) {
-                unitId = uRes.rows[0].id;
-            }
-            else {
-                const newU = await client.query('INSERT INTO app.units (name) VALUES ($1) RETURNING id', [p.unit]);
-                unitId = newU.rows[0].id;
-            }
-        }
-        await client.query(`INSERT INTO app.products (code, name, kind, unit_id, default_sale_price, data_origin)
-       VALUES ($1, $2, 'goods', $3, $4, 'excel_import')
-       ON CONFLICT (tenant_id, code) DO UPDATE 
-       SET name = EXCLUDED.name, default_sale_price = EXCLUDED.default_sale_price`, [p.code || `P${productsCreated + 1}`, p.name, unitId, p.price]);
-        productsCreated++;
+        const code = p.code || (await client.query("SELECT app.next_doc_number('product') AS code")).rows[0].code;
+        const res = await client.query(`INSERT INTO app.products (code, name, unit_name, default_sale_price)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (tenant_id, name) DO UPDATE
+       SET unit_name = COALESCE(EXCLUDED.unit_name, app.products.unit_name),
+           default_sale_price = COALESCE(EXCLUDED.default_sale_price, app.products.default_sale_price)
+       RETURNING id`, [code, p.name, p.unit || 'وحدة', p.price || 0]);
+        if (res.rows.length > 0)
+            productsCreated++;
     }
-    const today = new Date().toISOString().split('T')[0];
-    // 2. Commit Customers & Opening Balances
+    // 2. Employees
+    for (const e of preview.employeesFound) {
+        const code = (await client.query("SELECT app.next_doc_number('employee') AS code")).rows[0].code;
+        const res = await client.query(`INSERT INTO app.employees (code, full_name, job_title, daily_rate, phone)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (tenant_id, full_name) DO NOTHING
+       RETURNING id`, [code, e.name, e.jobTitle || null, e.dailyRate || 0, e.phone || null]);
+        if (res.rows.length > 0)
+            employeesCreated++;
+    }
+    // 3. Customers
     for (const c of preview.customersFound) {
-        const pRes = await client.query(`INSERT INTO app.parties (name, phone, is_customer, is_supplier, data_origin)
-       VALUES ($1, $2, true, false, 'excel_import')
-       ON CONFLICT (tenant_id, name) DO UPDATE SET phone = COALESCE(EXCLUDED.phone, app.parties.phone)
-       RETURNING id`, [c.name, c.phone || null]);
-        const partyId = pRes.rows[0].id;
-        customersCreated++;
-        // If customer has a non-zero balance, post an opening balance journal
-        if (c.balance !== 0) {
-            if (c.balance > 0) {
-                // Customer owes us: Dr Receivable (1100) / Cr Opening Balance Equity (3900)
+        const code = (await client.query("SELECT app.next_doc_number('customer') AS code")).rows[0].code;
+        const partyRes = await client.query(`INSERT INTO app.parties (code, name, phone, is_customer, customer_balance)
+       VALUES ($1, $2, $3, true, $4)
+       ON CONFLICT (tenant_id, name) DO UPDATE
+       SET is_customer = true,
+           customer_balance = EXCLUDED.customer_balance
+       RETURNING id`, [code, c.name, c.phone || null, c.balance]);
+        const partyId = partyRes.rows[0]?.id;
+        if (partyId) {
+            customersCreated++;
+            // Post opening balance journal entry if balance > 0
+            if (c.balance !== 0) {
                 await (0, accounting_js_1.postJournalEntry)(client, {
-                    entryDate: today,
+                    entryDate: c.startDate || new Date().toISOString().slice(0, 10),
                     sourceDocType: 'opening_balance',
                     sourceDocId: partyId,
-                    narration: `رصيد افتتاحي مرحل من إكسيل للعميل: ${c.name}`,
+                    narration: `رصيد افتتاحي مرحل من الإكسيل للعميل ${c.name}`,
                     lines: [
                         {
-                            accountCode: '1100',
+                            accountCode: '1100', // Receivable
                             partyId,
-                            debit: c.balance,
-                            credit: 0,
-                            description: `رصيد مرحل ${c.name}`,
+                            debit: c.balance > 0 ? c.balance : 0,
+                            credit: c.balance < 0 ? Math.abs(c.balance) : 0,
+                            description: `رصيد افتتاحي للعميل ${c.name}`,
                         },
                         {
-                            accountCode: '3900', // Opening Balance Equity (أرصدة افتتاحية)
-                            debit: 0,
-                            credit: c.balance,
-                            description: `رصيد افتتاحي ${c.name}`,
-                        },
-                    ],
-                });
-            }
-            else {
-                // Customer has credit balance: Dr Opening Balance Equity (3900) / Cr Receivable (1100)
-                const creditAmt = Math.abs(c.balance);
-                await (0, accounting_js_1.postJournalEntry)(client, {
-                    entryDate: today,
-                    sourceDocType: 'opening_balance',
-                    sourceDocId: partyId,
-                    narration: `رصيد دائن (مقدم) مرحل من إكسيل للعميل: ${c.name}`,
-                    lines: [
-                        {
-                            accountCode: '3900',
-                            debit: creditAmt,
-                            credit: 0,
-                            description: `رصيد افتتاحي دائن ${c.name}`,
-                        },
-                        {
-                            accountCode: '1100',
-                            partyId,
-                            debit: 0,
-                            credit: creditAmt,
-                            description: `رصيد مقدم مرحل ${c.name}`,
+                            accountCode: '3000', // Equity / Retained Earnings
+                            debit: c.balance < 0 ? Math.abs(c.balance) : 0,
+                            credit: c.balance > 0 ? c.balance : 0,
+                            description: `مقابل رصيد افتتاحي للعميل ${c.name}`,
                         },
                     ],
                 });
             }
         }
     }
-    // 3. Commit Suppliers & Opening Balances
+    // 4. Suppliers
     for (const s of preview.suppliersFound) {
-        const pRes = await client.query(`INSERT INTO app.parties (name, is_customer, is_supplier, data_origin)
-       VALUES ($1, false, true, 'excel_import')
-       ON CONFLICT (tenant_id, name) DO UPDATE SET is_supplier = true
-       RETURNING id`, [s.name]);
-        const partyId = pRes.rows[0].id;
-        suppliersCreated++;
-        // Supplier balance: we owe them (c.balance > 0): Dr Opening Balance (3900) / Cr Payable (2100)
-        if (s.balance !== 0) {
-            if (s.balance > 0) {
+        const code = (await client.query("SELECT app.next_doc_number('supplier') AS code")).rows[0].code;
+        const partyRes = await client.query(`INSERT INTO app.parties (code, name, phone, is_supplier, supplier_balance)
+       VALUES ($1, $2, $3, true, $4)
+       ON CONFLICT (tenant_id, name) DO UPDATE
+       SET is_supplier = true,
+           supplier_balance = EXCLUDED.supplier_balance
+       RETURNING id`, [code, s.name, s.phone || null, s.balance]);
+        const partyId = partyRes.rows[0]?.id;
+        if (partyId) {
+            suppliersCreated++;
+            // Post opening balance journal entry for supplier
+            if (s.balance !== 0) {
                 await (0, accounting_js_1.postJournalEntry)(client, {
-                    entryDate: today,
+                    entryDate: new Date().toISOString().slice(0, 10),
                     sourceDocType: 'opening_balance',
                     sourceDocId: partyId,
-                    narration: `رصيد افتتاحي مرحل من إكسيل للمورد: ${s.name}`,
+                    narration: `رصيد افتتاحي مرحل من الإكسيل للمورد ${s.name}`,
                     lines: [
                         {
-                            accountCode: '3900',
-                            debit: s.balance,
-                            credit: 0,
-                            description: `رصيد افتتاحي مورد ${s.name}`,
+                            accountCode: '3000', // Equity
+                            debit: s.balance > 0 ? s.balance : 0,
+                            credit: s.balance < 0 ? Math.abs(s.balance) : 0,
+                            description: `مقابل رصيد افتتاحي للمورد ${s.name}`,
                         },
                         {
-                            accountCode: '2100', // Payable (الموردون)
+                            accountCode: '2100', // Payable
                             partyId,
-                            debit: 0,
-                            credit: s.balance,
-                            description: `مستحق مرحل للمورد ${s.name}`,
+                            debit: s.balance < 0 ? Math.abs(s.balance) : 0,
+                            credit: s.balance > 0 ? s.balance : 0,
+                            description: `رصيد افتتاحي للمورد ${s.name}`,
                         },
                     ],
                 });
             }
         }
     }
-    return { customersCreated, suppliersCreated, productsCreated };
+    return {
+        customersCreated,
+        suppliersCreated,
+        productsCreated,
+        employeesCreated,
+    };
 }

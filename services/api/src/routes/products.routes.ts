@@ -22,34 +22,67 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
     return res.rows;
   });
 
-  // Create or Update Product
+  // Create Product (Auto-code, free-text unit_name)
   fastify.post('/', async (req, reply) => {
-    const { code, name, kind, unit_id, default_sale_price, min_stock_alert } = req.body as any;
-    if (!name || !code) return reply.status(400).send({ error: 'كود الصنف واسمه مطلوبان' });
+    const { code, name, kind, unit_name, unit_id, default_sale_price, default_purchase_price, min_stock } = req.body as any;
+    if (!name || !name.trim()) return reply.status(400).send({ error: 'اسم الصنف مطلوب' });
 
-    const res = await pool.query(
-      `INSERT INTO app.products (
-        code, name, kind, unit_id, default_sale_price, min_stock_alert
-      ) VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (tenant_id, code) DO UPDATE SET
-        name = EXCLUDED.name,
-        kind = EXCLUDED.kind,
-        unit_id = EXCLUDED.unit_id,
-        default_sale_price = EXCLUDED.default_sale_price,
-        min_stock_alert = EXCLUDED.min_stock_alert,
-        updated_at = now()
-      RETURNING *`,
-      [
-        code,
-        name,
-        kind || 'goods',
-        unit_id || null,
-        default_sale_price || 0,
-        min_stock_alert || 0,
-      ]
-    );
+    try {
+      const res = await pool.query(
+        `INSERT INTO app.products (
+          code, name, kind, unit_name, unit_id, default_sale_price, default_purchase_price, min_stock
+        ) VALUES (
+          NULLIF(trim($1), ''),
+          trim($2),
+          $3,
+          NULLIF(trim($4), ''),
+          $5,
+          $6,
+          $7,
+          $8
+        )
+        RETURNING *`,
+        [
+          code || null,
+          name,
+          kind || 'goods',
+          unit_name || null,
+          unit_id || null,
+          default_sale_price || 0,
+          default_purchase_price || 0,
+          min_stock || 0,
+        ]
+      );
 
-    return res.rows[0];
+      return res.rows[0];
+    } catch (err: any) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+
+  // Update Existing Product (Protected by PIN)
+  fastify.put('/:id', async (req, reply) => {
+    const { id } = req.params as any;
+    const { name, unit_name, default_sale_price, default_purchase_price, min_stock } = req.body as any;
+
+    try {
+      const res = await pool.query(
+        `UPDATE app.products
+         SET name = COALESCE(NULLIF(trim($1), ''), name),
+             unit_name = COALESCE(NULLIF(trim($2), ''), unit_name),
+             default_sale_price = COALESCE($3, default_sale_price),
+             default_purchase_price = COALESCE($4, default_purchase_price),
+             min_stock = COALESCE($5, min_stock),
+             updated_at = now()
+         WHERE id = $6 AND NOT is_deleted
+         RETURNING *`,
+        [name, unit_name, default_sale_price, default_purchase_price, min_stock, id]
+      );
+      if (res.rows.length === 0) return reply.status(404).send({ error: 'الصنف غير موجود' });
+      return res.rows[0];
+    } catch (err: any) {
+      return reply.status(400).send({ error: err.message });
+    }
   });
 };
 

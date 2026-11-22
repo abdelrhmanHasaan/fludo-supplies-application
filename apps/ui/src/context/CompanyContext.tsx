@@ -5,6 +5,7 @@ export interface CompanyProfile {
   id?: string;
   name_ar: string;
   name_en?: string;
+  owner_name?: string;
   tagline?: string;
   address?: string;
   phones?: string;
@@ -23,18 +24,18 @@ interface CompanyContextType {
 }
 
 const defaultCompany: CompanyProfile = {
-  name_ar: 'شركة الرضا للتوريدات',
-  name_en: 'AL REDA SUPPLIES CO.',
-  tagline: 'مواد البناء والتوريدات العامة',
-  address: 'كرداسة — الجيزة',
-  phones: '01030343576',
-  is_setup_completed: true,
+  name_ar: 'Fludo Supplies',
+  name_en: 'Fludo Supplies',
+  tagline: 'نظام إدارة التوريدات العامة والمبيعات والمخازن',
+  address: '',
+  phones: '',
+  is_setup_completed: false,
 };
 
 const CompanyContext = createContext<CompanyContextType>({
   company: defaultCompany,
-  logoLetter: 'ر',
-  isSetupCompleted: true,
+  logoLetter: 'ف',
+  isSetupCompleted: false,
   loading: false,
   refreshCompany: async () => {},
   showSetupModal: false,

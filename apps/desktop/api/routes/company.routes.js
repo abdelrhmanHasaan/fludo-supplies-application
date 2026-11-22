@@ -27,7 +27,7 @@ const companyRoutes = async (fastify) => {
         const isSetupCompleted = setupCheck.rows.length > 0 && setupCheck.rows[0].value === true;
         if (res.rows.length === 0) {
             return {
-                name_ar: 'شركة الرضا للتوريدات',
+                name_ar: 'Fludo Supplies',
                 name_en: 'AL REDA SUPPLIES CO.',
                 tagline: 'مواد البناء والتوريدات العامة',
                 address: 'كرداسة — الجيزة',

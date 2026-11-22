@@ -2,75 +2,43 @@ import type { FastifyPluginAsync } from 'fastify';
 import { pool } from '../config/db.js';
 
 export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
-  // Dashboard Overview
+  // Dashboard Overview: 8 Core Database-Computed Metrics
   fastify.get('/dashboard', async (req, reply) => {
-    // 1. Receivables (Customer balances > 0)
-    const recRes = await pool.query(`
-      SELECT COALESCE(SUM(balance), 0) AS total_receivables
-      FROM (
-        SELECT SUM(l.debit - l.credit) AS balance
-        FROM app.parties p
-        JOIN app.journal_lines l ON l.party_id = p.id
-        JOIN app.accounts a ON a.id = l.account_id AND a.system_role = 'receivable'
-        WHERE p.is_customer AND NOT p.is_deleted
-        GROUP BY p.id
-        HAVING SUM(l.debit - l.credit) > 0
-      ) sub
-    `);
+    const metricsRes = await pool.query(`SELECT * FROM app.v_dashboard_metrics;`);
+    const metrics = metricsRes.rows[0] || {};
 
-    // 2. Payables (Supplier balances > 0)
-    const payRes = await pool.query(`
-      SELECT COALESCE(SUM(balance), 0) AS total_payables
-      FROM (
-        SELECT SUM(l.credit - l.debit) AS balance
-        FROM app.parties p
-        JOIN app.journal_lines l ON l.party_id = p.id
-        JOIN app.accounts a ON a.id = l.account_id AND a.system_role = 'payable'
-        WHERE p.is_supplier AND NOT p.is_deleted
-        GROUP BY p.id
-        HAVING SUM(l.credit - l.debit) > 0
-      ) sub
-    `);
-
-    // 3. Cash on hand
-    const cashRes = await pool.query(`
-      SELECT COALESCE(SUM(l.debit - l.credit), 0) AS total_cash
-      FROM app.accounts a
-      JOIN app.journal_lines l ON l.account_id = a.id
-      WHERE a.system_role IN ('cash', 'bank')
-    `);
-
-    // 4. Sales today and this month
-    const todaySales = await pool.query(`
-      SELECT COALESCE(SUM(net_total), 0) AS total
-      FROM app.sales_invoices
-      WHERE invoice_date = CURRENT_DATE AND status = 'approved'
-    `);
-
-    const monthSales = await pool.query(`
-      SELECT COALESCE(SUM(net_total), 0) AS total
-      FROM app.sales_invoices
-      WHERE date_trunc('month', invoice_date) = date_trunc('month', CURRENT_DATE) AND status = 'approved'
-    `);
-
-    // 5. Pending Booked Orders (الحجوزات المعلقة)
-    const bookRes = await pool.query(`
-      SELECT 
-        COUNT(DISTINCT o.id) AS pending_orders_count,
-        COALESCE(SUM(ol.qty_ordered), 0) AS remaining_qty
-      FROM app.orders o
-      JOIN app.order_lines ol ON ol.order_id = o.id
-      WHERE o.status = 'confirmed' AND o.order_type = 'sales'
+    const cashBreakdown = await pool.query(`
+      SELECT
+        ca.id,
+        ca.name,
+        ca.kind,
+        (
+          ca.opening_balance +
+          COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'in' AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0)
+        ) AS balance
+      FROM app.cash_accounts ca
+      WHERE ca.is_active = true AND NOT ca.is_deleted
+      ORDER BY ca.name ASC;
     `);
 
     return {
-      totalReceivables: parseFloat(recRes.rows[0]?.total_receivables || '0'),
-      totalPayables: parseFloat(payRes.rows[0]?.total_payables || '0'),
-      totalCash: parseFloat(cashRes.rows[0]?.total_cash || '0'),
-      salesToday: parseFloat(todaySales.rows[0]?.total || '0'),
-      salesMonth: parseFloat(monthSales.rows[0]?.total || '0'),
-      pendingBookingsCount: parseInt(bookRes.rows[0]?.pending_orders_count || '0', 10),
-      pendingBookedQty: parseFloat(bookRes.rows[0]?.remaining_qty || '0'),
+      total_receivables: Number(metrics.total_receivables || 0),
+      total_payables: Number(metrics.total_payables || 0),
+      current_liquidity: Number(metrics.current_liquidity || 0),
+      current_month_sales: Number(metrics.current_month_sales || 0),
+      today_sales: Number(metrics.today_sales || 0),
+      active_customers_count: Number(metrics.active_customers_count || 0),
+      active_suppliers_count: Number(metrics.active_suppliers_count || 0),
+      active_employees_count: Number(metrics.active_employees_count || 0),
+      cash_accounts_breakdown: cashBreakdown.rows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        kind: r.kind,
+        balance: Number(r.balance || 0),
+      })),
     };
   });
 

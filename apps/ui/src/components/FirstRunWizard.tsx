@@ -9,7 +9,8 @@ interface FirstRunWizardProps {
 }
 
 export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSuccess, onClose }) => {
-  const [companyName, setCompanyName] = useState('شركة الرضا للتوريدات');
+  const [companyName, setCompanyName] = useState('');
+  const [ownerName, setOwnerName] = useState('');
   const [adminFullName, setAdminFullName] = useState('');
   const [password, setPassword] = useState('');
   const [managerPin, setManagerPin] = useState('');
@@ -58,6 +59,7 @@ export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSucces
     try {
       const res = await api.setupAdmin({
         companyName: companyName.trim(),
+        ownerName: ownerName.trim() || adminFullName.trim(),
         adminFullName: adminFullName.trim(),
         username: 'admin',
         password,
@@ -109,14 +111,29 @@ export const FirstRunWizard: React.FC<FirstRunWizardProps> = ({ isOpen, onSucces
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
               <Building2 className="w-4 h-4 text-blue-600" />
-              <span>اسم الشركة / المؤسسة *</span>
+              <span>اسم المكان / المنشأة *</span>
             </label>
             <input
               type="text"
               required
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="مثال: شركة الرضا للتوريدات"
+              placeholder="مثال: شركة النصر للتوريدات"
+              className="w-full px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold"
+            />
+          </div>
+
+          {/* Owner Name */}
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+              <User className="w-4 h-4 text-indigo-600" />
+              <span>اسم المالك</span>
+            </label>
+            <input
+              type="text"
+              value={ownerName}
+              onChange={(e) => setOwnerName(e.target.value)}
+              placeholder="مثال: أحمد عبد الله"
               className="w-full px-3.5 py-2.5 text-xs sm:text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold"
             />
           </div>

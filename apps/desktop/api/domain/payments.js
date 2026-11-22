@@ -12,10 +12,7 @@ async function recordPayment(client, params) {
     const direction = params.paymentType === 'supplier_payment' ? 'out' : 'in';
     let cashAccountId = params.cashAccountId;
     if (!cashAccountId) {
-        const cashRes = await client.query("SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cashbox') DESC LIMIT 1");
-        cashAccountId = cashRes.rows[0]?.id;
-        if (!cashAccountId)
-            throw new Error('لا توجد خزينة نشطة لتسجيل حركة النقدية');
+        throw new Error('اختر الخزينة/المحفظة/الحساب');
     }
     // 1. Insert payment in draft state first to get paymentId UUID
     const payRes = await client.query(`INSERT INTO app.payments (

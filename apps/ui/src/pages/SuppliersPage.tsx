@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api/client';
-import { Search, Plus, Truck, ArrowLeftRight, X, Trash2 } from 'lucide-react';
+import { Search, Plus, Truck, ArrowLeftRight, X, Trash2, FileText } from 'lucide-react';
 import { SmartDeleteModal } from '../components/SmartDeleteModal';
+import { PartyDetailsView } from '../components/PartyDetailsView';
 
 export const SuppliersPage: React.FC = () => {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -73,6 +74,16 @@ export const SuppliersPage: React.FC = () => {
     }
   };
 
+  if (selectedSupplier && !showNettingModal) {
+    return (
+      <PartyDetailsView
+        partyId={selectedSupplier.id}
+        isCustomer={false}
+        onBack={() => setSelectedSupplier(null)}
+      />
+    );
+  }
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
       {/* Top Controls */}
@@ -124,8 +135,11 @@ export const SuppliersPage: React.FC = () => {
               </tr>
             ) : (
               suppliers.map((s) => (
-                <tr key={s.id} className="hover:bg-slate-50/70">
-                  <td className="p-4 font-bold text-slate-800 flex items-center gap-2">
+                <tr key={s.id} className="hover:bg-slate-50/70 transition-colors">
+                  <td
+                    onClick={() => setSelectedSupplier(s)}
+                    className="p-4 font-bold text-slate-800 flex items-center gap-2 cursor-pointer hover:text-purple-600 hover:underline transition-colors"
+                  >
                     <Truck className="w-4 h-4 text-purple-600 shrink-0" />
                     <span>{s.name}</span>
                     {s.is_customer && (
@@ -145,6 +159,13 @@ export const SuppliersPage: React.FC = () => {
                   </td>
                   <td className="p-4 text-center">
                     <div className="flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => setSelectedSupplier(s)}
+                        className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 hover:bg-purple-100 font-bold text-xs inline-flex items-center gap-1"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>سجل الحساب</span>
+                      </button>
                       {s.is_customer && (
                         <button
                           onClick={() => {

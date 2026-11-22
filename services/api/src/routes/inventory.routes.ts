@@ -48,6 +48,54 @@ export const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
     }));
   });
 
+  // Reserved Breakdown (Customers and quantities reserved for this product)
+  fastify.get('/:id/reserved-breakdown', async (req, reply) => {
+    const { id } = req.params as any;
+    const res = await pool.query(
+      `SELECT
+        o.id AS order_id,
+        o.order_no,
+        TO_CHAR(o.order_date, 'YYYY-MM-DD') AS order_date,
+        p.id AS party_id,
+        p.name AS customer_name,
+        p.phone AS customer_phone,
+        ol.qty_ordered AS qty_reserved,
+        ol.unit_price,
+        ol.line_total
+      FROM app.orders o
+      JOIN app.order_lines ol ON ol.order_id = o.id
+      JOIN app.parties p ON p.id = o.party_id
+      WHERE ol.product_id = $1 AND o.status = 'open' AND o.order_type = 'sales' AND NOT o.is_deleted AND NOT ol.is_deleted
+      ORDER BY o.order_date DESC`,
+      [id]
+    );
+    return res.rows;
+  });
+
+  // Incoming Breakdown (Suppliers and quantities incoming/ordered for this product)
+  fastify.get('/:id/incoming-breakdown', async (req, reply) => {
+    const { id } = req.params as any;
+    const res = await pool.query(
+      `SELECT
+        o.id AS order_id,
+        o.order_no,
+        TO_CHAR(o.order_date, 'YYYY-MM-DD') AS order_date,
+        p.id AS party_id,
+        p.name AS supplier_name,
+        p.phone AS supplier_phone,
+        ol.qty_ordered AS qty_incoming,
+        ol.unit_price,
+        ol.line_total
+      FROM app.orders o
+      JOIN app.order_lines ol ON ol.order_id = o.id
+      JOIN app.parties p ON p.id = o.party_id
+      WHERE ol.product_id = $1 AND o.status = 'open' AND o.order_type = 'purchase' AND NOT o.is_deleted AND NOT ol.is_deleted
+      ORDER BY o.order_date DESC`,
+      [id]
+    );
+    return res.rows;
+  });
+
   // Manual Stock Adjustment
   fastify.post('/adjustment', async (req, reply) => {
     const { productId, qty, reason, unitCost } = req.body as any;

@@ -28,6 +28,7 @@ export const DataPortPage: React.FC = () => {
   const [sqlScript, setSqlScript] = useState('');
   const [sqlLoading, setSqlLoading] = useState(false);
   const [sqlResult, setSqlResult] = useState<string | null>(null);
+  const [activePreviewTab, setActivePreviewTab] = useState<'customers' | 'suppliers' | 'products'>('customers');
   const [downloadLoading, setDownloadLoading] = useState<string | null>(null);
   const [fixFormulas, setFixFormulas] = useState(true);
 
@@ -179,15 +180,29 @@ export const DataPortPage: React.FC = () => {
           </p>
         </div>
 
-        {/* Quick Sample Template Button */}
-        <button
-          onClick={() => handleExportDownload('template/excel', 'نموذج_استيراد_بيانات_مؤسسة.xlsx')}
-          disabled={downloadLoading !== null}
-          className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center gap-2 transition-all shrink-0"
-        >
-          <Download className="w-4 h-4" />
-          <span>تحميل نموذج إكسيل جاهز لتعبئة واستيراد البيانات</span>
-        </button>
+        {/* Quick Sample Template & Full exportDB Button */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={async () => {
+              await handleExportDownload('export/sql/full-backup', 'fludo_erp_full_backup.sql');
+              await handleExportDownload('export/excel/data-workbook', 'fludo_erp_data_workbook.xlsx');
+            }}
+            disabled={downloadLoading !== null}
+            className="px-4 py-2.5 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-600 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-md shadow-blue-700/25 flex items-center gap-2 transition-all shrink-0"
+          >
+            <Database className="w-4 h-4 text-amber-300" />
+            <span>تصدير قاعدة البيانات بالكامل (exportDB) — حزمة SQL + Excel</span>
+          </button>
+
+          <button
+            onClick={() => handleExportDownload('template/excel', 'نموذج_استيراد_بيانات_مؤسسة.xlsx')}
+            disabled={downloadLoading !== null}
+            className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center gap-2 transition-all shrink-0"
+          >
+            <Download className="w-4 h-4" />
+            <span>نموذج إكسيل جاهز</span>
+          </button>
+        </div>
       </div>
 
       {/* Notifications */}
@@ -399,34 +414,229 @@ export const DataPortPage: React.FC = () => {
               </div>
             )}
 
-            {/* Preview Result Box */}
+            {/* Preview Result Box & Staging Table */}
             {preview && (
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-4 animate-in fade-in">
-                <div className="flex items-center justify-between border-b pb-2">
-                  <h4 className="font-black text-xs text-slate-800">نتيجة فحص وتدقيق الشيت:</h4>
-                  <span className="text-[11px] text-slate-500 font-bold">{file?.name}</span>
+              <div className="bg-slate-50 border border-slate-300 rounded-2xl p-5 space-y-5 animate-in fade-in">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
+                  <div>
+                    <h4 className="font-black text-sm text-slate-800 flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-blue-600" />
+                      <span>شاشة مراجعة البيانات قبل الحفظ (Staging Preview)</span>
+                    </h4>
+                    <span className="text-[11px] text-slate-500 font-medium">
+                      الملف: <strong className="text-slate-700">{file?.name}</strong>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 text-xs font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setActivePreviewTab('customers')}
+                      className={`px-3 py-1.5 rounded-lg transition-all ${
+                        activePreviewTab === 'customers'
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      العملاء ({preview.customersFound?.length || 0})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePreviewTab('suppliers')}
+                      className={`px-3 py-1.5 rounded-lg transition-all ${
+                        activePreviewTab === 'suppliers'
+                          ? 'bg-purple-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      الموردين ({preview.suppliersFound?.length || 0})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePreviewTab('products')}
+                      className={`px-3 py-1.5 rounded-lg transition-all ${
+                        activePreviewTab === 'products'
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      الأصناف ({preview.productsFound?.length || 0})
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                  <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                    <span className="text-slate-400 block text-[10px] font-bold">العملاء</span>
-                    <strong className="text-blue-700 text-base font-black">{preview.customersFound?.length || 0}</strong>
-                    <span className="text-[10px] text-slate-400 block">عميل</span>
+                {/* Totals Summary Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  {/* Customers Totals */}
+                  <div className="bg-white p-3.5 rounded-xl border border-blue-200 shadow-sm space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-blue-900 text-xs">إجمالي العملاء المستخرجين</span>
+                      <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        {preview.customersFound?.length || 0} عميل
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center pt-1 border-t border-slate-100">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-bold">المشتريات</span>
+                        <span className="font-black text-slate-800 text-xs">
+                          {Number(preview.totals?.customerPurchases || 0).toLocaleString()} ج.م
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-bold">المسدد</span>
+                        <span className="font-black text-emerald-600 text-xs">
+                          {Number(preview.totals?.customerPaid || 0).toLocaleString()} ج.م
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-bold">المتبقي</span>
+                        <span className="font-black text-rose-600 text-xs">
+                          {Number(preview.totals?.customerRemaining || 0).toLocaleString()} ج.م
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                    <span className="text-slate-400 block text-[10px] font-bold">الموردين</span>
-                    <strong className="text-purple-700 text-base font-black">{preview.suppliersFound?.length || 0}</strong>
-                    <span className="text-[10px] text-slate-400 block">مورد</span>
-                  </div>
-                  <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-                    <span className="text-slate-400 block text-[10px] font-bold">الأصناف</span>
-                    <strong className="text-emerald-700 text-base font-black">{preview.productsFound?.length || 0}</strong>
-                    <span className="text-[10px] text-slate-400 block">صنف</span>
+
+                  {/* Suppliers Totals */}
+                  <div className="bg-white p-3.5 rounded-xl border border-purple-200 shadow-sm space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-purple-900 text-xs">إجمالي الموردين المستخرجين</span>
+                      <span className="bg-purple-100 text-purple-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        {preview.suppliersFound?.length || 0} مورد
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center pt-1 border-t border-slate-100">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-bold">المشتريات</span>
+                        <span className="font-black text-slate-800 text-xs">
+                          {Number(preview.totals?.supplierPurchases || 0).toLocaleString()} ج.م
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-bold">المسدد</span>
+                        <span className="font-black text-emerald-600 text-xs">
+                          {Number(preview.totals?.supplierPaid || 0).toLocaleString()} ج.م
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-bold">المتبقي</span>
+                        <span className="font-black text-rose-600 text-xs">
+                          {Number(preview.totals?.supplierRemaining || 0).toLocaleString()} ج.م
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                {/* Commit Button */}
-                <div className="flex gap-2 pt-2">
+                {/* Staging Data Table */}
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden max-h-72 overflow-y-auto">
+                  {activePreviewTab === 'customers' && (
+                    <table className="w-full text-right text-xs">
+                      <thead className="bg-slate-100 text-slate-600 font-bold sticky top-0 border-b border-slate-200">
+                        <tr>
+                          <th className="p-2.5">#</th>
+                          <th className="p-2.5">اسم العميل</th>
+                          <th className="p-2.5">الهاتف / الفئة</th>
+                          <th className="p-2.5 text-center">المشتريات</th>
+                          <th className="p-2.5 text-center">المسدد</th>
+                          <th className="p-2.5 text-center">المتبقي</th>
+                          <th className="p-2.5 text-center">العمليات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {preview.customersFound?.map((c: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="p-2.5 text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+                            <td className="p-2.5 font-black text-slate-800">{c.name}</td>
+                            <td className="p-2.5 text-[11px] text-slate-500">
+                              {c.phone || c.category || '—'}
+                            </td>
+                            <td className="p-2.5 text-center font-bold text-slate-800">
+                              {Number(c.purchases || 0).toLocaleString()}
+                            </td>
+                            <td className="p-2.5 text-center font-bold text-emerald-600">
+                              {Number(c.paid || 0).toLocaleString()}
+                            </td>
+                            <td className="p-2.5 text-center font-black text-rose-600">
+                              {Number(c.remaining || 0).toLocaleString()}
+                            </td>
+                            <td className="p-2.5 text-center text-[10px] text-slate-400">
+                              {(c.salesLines?.length || 0) + (c.payments?.length || 0)} سطر
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {activePreviewTab === 'suppliers' && (
+                    <table className="w-full text-right text-xs">
+                      <thead className="bg-slate-100 text-slate-600 font-bold sticky top-0 border-b border-slate-200">
+                        <tr>
+                          <th className="p-2.5">#</th>
+                          <th className="p-2.5">اسم المورد</th>
+                          <th className="p-2.5">الهاتف / الفئة</th>
+                          <th className="p-2.5 text-center">المشتريات</th>
+                          <th className="p-2.5 text-center">المسدد</th>
+                          <th className="p-2.5 text-center">المتبقي</th>
+                          <th className="p-2.5 text-center">العمليات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {preview.suppliersFound?.map((s: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="p-2.5 text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+                            <td className="p-2.5 font-black text-slate-800">{s.name}</td>
+                            <td className="p-2.5 text-[11px] text-slate-500">
+                              {s.phone || s.category || '—'}
+                            </td>
+                            <td className="p-2.5 text-center font-bold text-slate-800">
+                              {Number(s.purchases || 0).toLocaleString()}
+                            </td>
+                            <td className="p-2.5 text-center font-bold text-emerald-600">
+                              {Number(s.paid || 0).toLocaleString()}
+                            </td>
+                            <td className="p-2.5 text-center font-black text-rose-600">
+                              {Number(s.remaining || 0).toLocaleString()}
+                            </td>
+                            <td className="p-2.5 text-center text-[10px] text-slate-400">
+                              {(s.incomingLines?.length || 0) + (s.payments?.length || 0)} سطر
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {activePreviewTab === 'products' && (
+                    <table className="w-full text-right text-xs">
+                      <thead className="bg-slate-100 text-slate-600 font-bold sticky top-0 border-b border-slate-200">
+                        <tr>
+                          <th className="p-2.5">#</th>
+                          <th className="p-2.5">كود الصنف</th>
+                          <th className="p-2.5">اسم الصنف</th>
+                          <th className="p-2.5">الوحدة</th>
+                          <th className="p-2.5 text-center">سعر البيع الافتراضي</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {preview.productsFound?.map((p: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="p-2.5 text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+                            <td className="p-2.5 font-mono text-blue-600 font-bold">{p.code || '—'}</td>
+                            <td className="p-2.5 font-black text-slate-800">{p.name}</td>
+                            <td className="p-2.5 text-slate-600">{p.unit || '—'}</td>
+                            <td className="p-2.5 text-center font-bold text-emerald-600">
+                              {Number(p.price || 0).toLocaleString()} ج.م
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Commit & Cancel Actions */}
+                <div className="flex gap-2 pt-1">
                   <button
                     type="button"
                     onClick={handleCommitExcel}
@@ -441,7 +651,7 @@ export const DataPortPage: React.FC = () => {
                     ) : (
                       <>
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>تأكيد الاستيراد وترحيل الأرصدة الافتتاحية</span>
+                        <span>تأكيد الاستيراد وترحيل الأرصدة الافتتاحية للدفاتر</span>
                       </>
                     )}
                   </button>
@@ -451,7 +661,7 @@ export const DataPortPage: React.FC = () => {
                       setPreview(null);
                       setFile(null);
                     }}
-                    className="px-4 py-3 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-bold transition-colors"
+                    className="px-5 py-3 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-bold transition-colors"
                   >
                     إلغاء
                   </button>

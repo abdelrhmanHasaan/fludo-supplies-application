@@ -24,7 +24,6 @@ export type SectionKey =
   | 'customers'
   | 'suppliers'
   | 'inventory'
-  | 'products'
   | 'invoices'
   | 'shipments'
   | 'treasury'
@@ -49,7 +48,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentSection, onSelectSectio
     { key: 'customers', label: 'العملاء وكشوف الحساب', icon: Users },
     { key: 'suppliers', label: 'الموردين والمشتريات', icon: Truck },
     { key: 'inventory', label: 'المخزون وحركة البضاعة', icon: Boxes },
-    { key: 'products', label: 'المنتجات والأسعار', icon: Tag },
     { key: 'invoices', label: 'الفواتير والطباعة', icon: FileText },
     { key: 'shipments', label: 'الشحنات والسائقين', icon: Navigation },
     { key: 'treasury', label: 'الخزينة والبنوك', icon: Wallet },

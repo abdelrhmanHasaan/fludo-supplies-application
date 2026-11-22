@@ -2,7 +2,7 @@
   "name": "fludo-supplies-erp",
   "version": "1.4.0",
   "private": true,
-  "description": "Building-Materials Yard ERP (Offline-First Windows Desktop + PostgreSQL) for Al-Reda Supplies Co.",
+  "description": "Building-Materials Yard ERP (Offline-First Windows Desktop + PostgreSQL) for Fludo Supplies",
   "workspaces": [
     "services/api",
     "apps/ui",

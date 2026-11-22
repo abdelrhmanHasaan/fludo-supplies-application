@@ -6,6 +6,8 @@ export interface InvoiceLineInput {
   productId: string;
   qty: number;
   unitPrice: number;
+  unitName?: string;
+  discountAmount?: number;
   orderLineId?: string;
   notes?: string;
 }
@@ -14,7 +16,12 @@ export interface CreateSalesInvoiceParams {
   partyId: string;
   invoiceDate: string;
   handlingFee?: number;
+  discountAmount?: number;
   amountPaidNow?: number;
+  cashAccountId?: string;
+  driverId?: string;
+  vehicleId?: string;
+  destination?: string;
   notes?: string;
   lines: InvoiceLineInput[];
 }
@@ -45,12 +52,13 @@ export async function createSalesInvoice(
 
   // 2. Insert invoice header
   const handlingFee = params.handlingFee || 0;
+  const discountAmount = params.discountAmount || 0;
   const invRes = await client.query(
     `INSERT INTO app.sales_invoices (
       invoice_no, party_id, branch_id, invoice_date, status,
-      handling_fee, previous_balance_snapshot,
+      handling_fee, discount_amount, previous_balance_snapshot,
       notes
-    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7)
+    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8)
     RETURNING id`,
     [
       invoiceNumber,
@@ -58,6 +66,7 @@ export async function createSalesInvoice(
       branchId,
       params.invoiceDate,
       handlingFee,
+      discountAmount,
       previousBalance,
       params.notes || null,
     ]
@@ -68,27 +77,49 @@ export async function createSalesInvoice(
   let lineNo = 1;
   for (const line of params.lines) {
     const prodRes = await client.query(
-      'SELECT default_sale_price, unit_id FROM app.products WHERE id = $1',
+      'SELECT default_sale_price, unit_id, unit_name FROM app.products WHERE id = $1',
       [line.productId]
     );
     const catalogPrice = prodRes.rows[0]?.default_sale_price || line.unitPrice;
     const unitId = prodRes.rows[0]?.unit_id || null;
+    const unitName = (line.unitName || prodRes.rows[0]?.unit_name || '').trim() || null;
+    const lineDiscount = line.discountAmount || 0;
 
     await client.query(
       `INSERT INTO app.sales_invoice_lines (
-        invoice_id, line_no, product_id, unit_id, qty, unit_price,
-        catalog_price_snapshot, order_line_id, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        invoice_id, line_no, product_id, unit_id, unit_name, qty, unit_price,
+        discount_amount, catalog_price_snapshot, order_line_id, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         invoiceId,
         lineNo++,
         line.productId,
         unitId,
+        unitName,
         line.qty,
         line.unitPrice,
+        lineDiscount,
         catalogPrice,
         line.orderLineId || null,
         line.notes || null,
+      ]
+    );
+  }
+
+  // 4. Create shipment if transport details provided
+  if (params.destination || params.driverId || params.vehicleId) {
+    const nextShipmentNum = await client.query("SELECT app.next_doc_number('shipment') AS num");
+    await client.query(
+      `INSERT INTO app.shipments (
+        shipment_no, status, invoice_id, driver_id, vehicle_id, destination, departed_at, notes
+      ) VALUES ($1, 'delivered', $2, $3, $4, $5, NOW(), $6)`,
+      [
+        nextShipmentNum.rows[0]?.num || `SH-${Date.now()}`,
+        invoiceId,
+        params.driverId || null,
+        params.vehicleId || null,
+        params.destination || null,
+        params.notes || null,
       ]
     );
   }
@@ -100,7 +131,8 @@ export async function approveSalesInvoice(
   client: PoolClient,
   invoiceId: string,
   approvedBy: string,
-  amountPaidNow: number = 0
+  amountPaidNow: number = 0,
+  cashAccountId?: string
 ): Promise<void> {
   const invRes = await client.query(
     'SELECT * FROM app.sales_invoices WHERE id = $1',
@@ -216,11 +248,18 @@ export async function approveSalesInvoice(
       ],
     });
 
-    // Fetch active cash account
-    const cashAccRes = await client.query(
-      "SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cashbox') DESC, created_at ASC LIMIT 1"
-    );
-    const cashAccountId = cashAccRes.rows[0]?.id || null;
+    // Verify cash account
+    let resolvedCashAccountId = cashAccountId;
+    if (!resolvedCashAccountId) {
+      const cashAccRes = await client.query(
+        "SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cash') DESC, created_at ASC LIMIT 1"
+      );
+      resolvedCashAccountId = cashAccRes.rows[0]?.id || null;
+    }
+
+    if (!resolvedCashAccountId) {
+      throw new Error('اختر الخزينة/المحفظة/الحساب للمبلغ المسدد نقداً');
+    }
 
     const payRes = await client.query(
       `INSERT INTO app.payments (
@@ -231,7 +270,7 @@ export async function approveSalesInvoice(
       [
         payNumber,
         inv.party_id,
-        cashAccountId,
+        resolvedCashAccountId,
         inv.invoice_date,
         amountPaidNow,
         payJournalId,

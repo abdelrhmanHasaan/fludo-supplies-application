@@ -140907,12 +140907,12 @@ var authRoutes = async (fastify2) => {
     return {
       initialized: count > 0,
       userCount: totalCount,
-      companyName: compRes.rows[0]?.name_ar || "\u0634\u0631\u0643\u0629 \u0627\u0644\u0631\u0636\u0627 \u0644\u0644\u062A\u0648\u0631\u064A\u062F\u0627\u062A",
+      companyName: compRes.rows[0]?.name_ar || "Fludo Supplies",
       adminName: userRes.rows[0]?.full_name || "\u0645\u062F\u064A\u0631 \u0627\u0644\u0646\u0638\u0627\u0645"
     };
   });
   fastify2.post("/setup", async (req, reply) => {
-    const { companyName, adminFullName, username, password, managerPin } = req.body;
+    const { companyName, ownerName, adminFullName, username, password, managerPin } = req.body;
     const checkUsers = await pool.query(
       `SELECT count(*)::int AS count FROM app.users WHERE NOT is_deleted AND last_login_at IS NOT NULL`
     );
@@ -140939,8 +140939,8 @@ var authRoutes = async (fastify2) => {
     const pinHash = await hashSecret(cleanPin);
     const result = await withTransaction(async (client) => {
       await client.query(
-        `UPDATE app.company_profile SET name_ar = $1, updated_at = NOW()`,
-        [cleanCompanyName]
+        `UPDATE app.company_profile SET name_ar = $1, owner_name = $2, updated_at = NOW()`,
+        [cleanCompanyName, (ownerName || cleanFullName || "").trim()]
       );
       await client.query(`DELETE FROM app.users WHERE last_login_at IS NULL`);
       let roleRes = await client.query(`SELECT id FROM app.roles WHERE code = 'admin'`);
@@ -141200,11 +141200,7 @@ async function recordPayment(client, params) {
   const direction = params.paymentType === "supplier_payment" ? "out" : "in";
   let cashAccountId = params.cashAccountId;
   if (!cashAccountId) {
-    const cashRes = await client.query(
-      "SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cashbox') DESC LIMIT 1"
-    );
-    cashAccountId = cashRes.rows[0]?.id;
-    if (!cashAccountId) throw new Error("\u0644\u0627 \u062A\u0648\u062C\u062F \u062E\u0632\u064A\u0646\u0629 \u0646\u0634\u0637\u0629 \u0644\u062A\u0633\u062C\u064A\u0644 \u062D\u0631\u0643\u0629 \u0627\u0644\u0646\u0642\u062F\u064A\u0629");
+    throw new Error("\u0627\u062E\u062A\u0631 \u0627\u0644\u062E\u0632\u064A\u0646\u0629/\u0627\u0644\u0645\u062D\u0641\u0638\u0629/\u0627\u0644\u062D\u0633\u0627\u0628");
   }
   const payRes = await client.query(
     `INSERT INTO app.payments (
@@ -141411,6 +141407,88 @@ var partiesRoutes = async (fastify2) => {
     );
     return res.rows[0];
   });
+  fastify2.get("/:id/activity", async (req, reply) => {
+    const { id } = req.params;
+    const res = await pool.query(
+      `SELECT * FROM app.v_party_activity WHERE party_id = $1 ORDER BY occurred_at DESC, document_id DESC`,
+      [id]
+    );
+    return res.rows;
+  });
+  fastify2.get("/:id/summary", async (req, reply) => {
+    const { id } = req.params;
+    const res = await pool.query(
+      `SELECT * FROM app.v_party_summary WHERE party_id = $1`,
+      [id]
+    );
+    if (res.rows.length === 0) return reply.status(404).send({ error: "\u0627\u0644\u0637\u0631\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+    return res.rows[0];
+  });
+  fastify2.get("/:id/shipments", async (req, reply) => {
+    const { id } = req.params;
+    const res = await pool.query(
+      `SELECT
+        sh.id,
+        sh.shipment_no,
+        sh.departed_at,
+        sh.destination,
+        sh.status,
+        si.id AS invoice_id,
+        si.invoice_no,
+        si.lines_total,
+        si.discount_amount,
+        si.net_total,
+        e.full_name AS driver_name,
+        eq.name AS vehicle_name,
+        eq.plate_no,
+        (
+          SELECT json_agg(json_build_object(
+            'product_name', p.name,
+            'qty', sil.qty,
+            'unit_name', sil.unit_name,
+            'unit_price', sil.unit_price,
+            'discount_amount', sil.discount_amount,
+            'line_total', sil.line_total
+          ))
+          FROM app.sales_invoice_lines sil
+          JOIN app.products p ON p.id = sil.product_id
+          WHERE sil.invoice_id = si.id AND NOT sil.is_deleted
+        ) AS items
+      FROM app.shipments sh
+      JOIN app.sales_invoices si ON si.id = sh.invoice_id
+      LEFT JOIN app.employees e ON e.id = sh.driver_id
+      LEFT JOIN app.equipment eq ON eq.id = sh.vehicle_id
+      WHERE si.party_id = $1 AND NOT sh.is_deleted AND NOT si.is_deleted
+      ORDER BY sh.departed_at DESC NULLS LAST, sh.created_at DESC`,
+      [id]
+    );
+    return res.rows;
+  });
+  fastify2.put("/:id", async (req, reply) => {
+    const { id } = req.params;
+    const { name, phone, category, relationship_start, credit_limit, supplies_text, notes, is_active } = req.body;
+    try {
+      const res = await pool.query(
+        `UPDATE app.parties
+         SET name = COALESCE($1, name),
+             phone = $2,
+             category = $3,
+             relationship_start = $4,
+             credit_limit = $5,
+             supplies_text = $6,
+             notes = $7,
+             is_active = COALESCE($8, is_active),
+             updated_at = now()
+         WHERE id = $9
+         RETURNING *`,
+        [name, phone, category, relationship_start, credit_limit, supplies_text, notes, is_active, id]
+      );
+      if (res.rows.length === 0) return reply.status(404).send({ error: "\u0627\u0644\u0637\u0631\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+      return res.rows[0];
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
   fastify2.get("/:id/statement", async (req, reply) => {
     const { id } = req.params;
     const { start_date, end_date } = req.query;
@@ -141552,30 +141630,60 @@ var productsRoutes = async (fastify2) => {
     return res.rows;
   });
   fastify2.post("/", async (req, reply) => {
-    const { code, name, kind, unit_id, default_sale_price, min_stock_alert } = req.body;
-    if (!name || !code) return reply.status(400).send({ error: "\u0643\u0648\u062F \u0627\u0644\u0635\u0646\u0641 \u0648\u0627\u0633\u0645\u0647 \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
-    const res = await pool.query(
-      `INSERT INTO app.products (
-        code, name, kind, unit_id, default_sale_price, min_stock_alert
-      ) VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (tenant_id, code) DO UPDATE SET
-        name = EXCLUDED.name,
-        kind = EXCLUDED.kind,
-        unit_id = EXCLUDED.unit_id,
-        default_sale_price = EXCLUDED.default_sale_price,
-        min_stock_alert = EXCLUDED.min_stock_alert,
-        updated_at = now()
-      RETURNING *`,
-      [
-        code,
-        name,
-        kind || "goods",
-        unit_id || null,
-        default_sale_price || 0,
-        min_stock_alert || 0
-      ]
-    );
-    return res.rows[0];
+    const { code, name, kind, unit_name, unit_id, default_sale_price, default_purchase_price, min_stock } = req.body;
+    if (!name || !name.trim()) return reply.status(400).send({ error: "\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641 \u0645\u0637\u0644\u0648\u0628" });
+    try {
+      const res = await pool.query(
+        `INSERT INTO app.products (
+          code, name, kind, unit_name, unit_id, default_sale_price, default_purchase_price, min_stock
+        ) VALUES (
+          NULLIF(trim($1), ''),
+          trim($2),
+          $3,
+          NULLIF(trim($4), ''),
+          $5,
+          $6,
+          $7,
+          $8
+        )
+        RETURNING *`,
+        [
+          code || null,
+          name,
+          kind || "goods",
+          unit_name || null,
+          unit_id || null,
+          default_sale_price || 0,
+          default_purchase_price || 0,
+          min_stock || 0
+        ]
+      );
+      return res.rows[0];
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+  fastify2.put("/:id", async (req, reply) => {
+    const { id } = req.params;
+    const { name, unit_name, default_sale_price, default_purchase_price, min_stock } = req.body;
+    try {
+      const res = await pool.query(
+        `UPDATE app.products
+         SET name = COALESCE(NULLIF(trim($1), ''), name),
+             unit_name = COALESCE(NULLIF(trim($2), ''), unit_name),
+             default_sale_price = COALESCE($3, default_sale_price),
+             default_purchase_price = COALESCE($4, default_purchase_price),
+             min_stock = COALESCE($5, min_stock),
+             updated_at = now()
+         WHERE id = $6 AND NOT is_deleted
+         RETURNING *`,
+        [name, unit_name, default_sale_price, default_purchase_price, min_stock, id]
+      );
+      if (res.rows.length === 0) return reply.status(404).send({ error: "\u0627\u0644\u0635\u0646\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+      return res.rows[0];
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
   });
 };
 
@@ -141726,12 +141834,13 @@ async function createSalesInvoice(client, params) {
   const branchId = branchRes.rows[0]?.id;
   if (!branchId) throw new Error("\u0644\u0627 \u064A\u0648\u062C\u062F \u0641\u0631\u0639 \u0646\u0634\u0637 \u0644\u0631\u0628\u0637 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u0647");
   const handlingFee = params.handlingFee || 0;
+  const discountAmount = params.discountAmount || 0;
   const invRes = await client.query(
     `INSERT INTO app.sales_invoices (
       invoice_no, party_id, branch_id, invoice_date, status,
-      handling_fee, previous_balance_snapshot,
+      handling_fee, discount_amount, previous_balance_snapshot,
       notes
-    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7)
+    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8)
     RETURNING id`,
     [
       invoiceNumber,
@@ -141739,6 +141848,7 @@ async function createSalesInvoice(client, params) {
       branchId,
       params.invoiceDate,
       handlingFee,
+      discountAmount,
       previousBalance,
       params.notes || null
     ]
@@ -141747,32 +141857,52 @@ async function createSalesInvoice(client, params) {
   let lineNo = 1;
   for (const line of params.lines) {
     const prodRes = await client.query(
-      "SELECT default_sale_price, unit_id FROM app.products WHERE id = $1",
+      "SELECT default_sale_price, unit_id, unit_name FROM app.products WHERE id = $1",
       [line.productId]
     );
     const catalogPrice = prodRes.rows[0]?.default_sale_price || line.unitPrice;
     const unitId = prodRes.rows[0]?.unit_id || null;
+    const unitName = (line.unitName || prodRes.rows[0]?.unit_name || "").trim() || null;
+    const lineDiscount = line.discountAmount || 0;
     await client.query(
       `INSERT INTO app.sales_invoice_lines (
-        invoice_id, line_no, product_id, unit_id, qty, unit_price,
-        catalog_price_snapshot, order_line_id, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        invoice_id, line_no, product_id, unit_id, unit_name, qty, unit_price,
+        discount_amount, catalog_price_snapshot, order_line_id, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         invoiceId,
         lineNo++,
         line.productId,
         unitId,
+        unitName,
         line.qty,
         line.unitPrice,
+        lineDiscount,
         catalogPrice,
         line.orderLineId || null,
         line.notes || null
       ]
     );
   }
+  if (params.destination || params.driverId || params.vehicleId) {
+    const nextShipmentNum = await client.query("SELECT app.next_doc_number('shipment') AS num");
+    await client.query(
+      `INSERT INTO app.shipments (
+        shipment_no, status, invoice_id, driver_id, vehicle_id, destination, departed_at, notes
+      ) VALUES ($1, 'delivered', $2, $3, $4, $5, NOW(), $6)`,
+      [
+        nextShipmentNum.rows[0]?.num || `SH-${Date.now()}`,
+        invoiceId,
+        params.driverId || null,
+        params.vehicleId || null,
+        params.destination || null,
+        params.notes || null
+      ]
+    );
+  }
   return invoiceId;
 }
-async function approveSalesInvoice(client, invoiceId, approvedBy, amountPaidNow = 0) {
+async function approveSalesInvoice(client, invoiceId, approvedBy, amountPaidNow = 0, cashAccountId) {
   const invRes = await client.query(
     "SELECT * FROM app.sales_invoices WHERE id = $1",
     [invoiceId]
@@ -141877,10 +142007,16 @@ async function approveSalesInvoice(client, invoiceId, approvedBy, amountPaidNow 
         }
       ]
     });
-    const cashAccRes = await client.query(
-      "SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cashbox') DESC, created_at ASC LIMIT 1"
-    );
-    const cashAccountId = cashAccRes.rows[0]?.id || null;
+    let resolvedCashAccountId = cashAccountId;
+    if (!resolvedCashAccountId) {
+      const cashAccRes = await client.query(
+        "SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cash') DESC, created_at ASC LIMIT 1"
+      );
+      resolvedCashAccountId = cashAccRes.rows[0]?.id || null;
+    }
+    if (!resolvedCashAccountId) {
+      throw new Error("\u0627\u062E\u062A\u0631 \u0627\u0644\u062E\u0632\u064A\u0646\u0629/\u0627\u0644\u0645\u062D\u0641\u0638\u0629/\u0627\u0644\u062D\u0633\u0627\u0628 \u0644\u0644\u0645\u0628\u0644\u063A \u0627\u0644\u0645\u0633\u062F\u062F \u0646\u0642\u062F\u0627\u064B");
+    }
     const payRes = await client.query(
       `INSERT INTO app.payments (
         payment_no, direction, party_id, cash_account_id, payment_date,
@@ -141890,7 +142026,7 @@ async function approveSalesInvoice(client, invoiceId, approvedBy, amountPaidNow 
       [
         payNumber,
         inv.party_id,
-        cashAccountId,
+        resolvedCashAccountId,
         inv.invoice_date,
         amountPaidNow,
         payJournalId,
@@ -142017,6 +142153,131 @@ async function createPurchaseInvoice(client, params) {
 
 // src/routes/invoices.routes.ts
 var invoicesRoutes = async (fastify2) => {
+  fastify2.get("/registry", async (req, reply) => {
+    const { doc_type, payment_status, start_date, end_date, search } = req.query;
+    let sql = `
+      WITH all_invoices AS (
+        SELECT
+          si.id,
+          si.invoice_no,
+          'sale' AS doc_kind,
+          si.invoice_type,
+          si.invoice_date,
+          si.created_at,
+          p.id AS party_id,
+          p.name AS party_name,
+          p.phone AS party_phone,
+          si.net_total::numeric(16,2),
+          si.discount_amount::numeric(16,2),
+          si.handling_fee::numeric(16,2),
+          si.status,
+          COALESCE((
+            SELECT string_agg(pr.name || ' (' || sil.qty || ' ' || COALESCE(sil.unit_name, '') || ')', '\u060C ')
+            FROM app.sales_invoice_lines sil
+            JOIN app.products pr ON pr.id = sil.product_id
+            WHERE sil.invoice_id = si.id
+          ), '') AS items_summary,
+          COALESCE((
+            SELECT SUM(pa.amount)
+            FROM app.payment_allocations pa
+            WHERE pa.sales_invoice_id = si.id
+          ), 0)::numeric(16,2) AS paid_amount,
+          s.destination,
+          COALESCE(e.full_name, '') AS driver_name,
+          COALESCE(eq.name, '') AS vehicle_name,
+          si.notes
+        FROM app.sales_invoices si
+        JOIN app.parties p ON p.id = si.party_id
+        LEFT JOIN app.shipments s ON s.invoice_id = si.id
+        LEFT JOIN app.employees e ON e.id = s.driver_id
+        LEFT JOIN app.equipment eq ON eq.id = s.vehicle_id
+        WHERE NOT si.is_deleted
+
+        UNION ALL
+
+        SELECT
+          pi.id,
+          pi.invoice_no,
+          'purchase' AS doc_kind,
+          pi.invoice_type,
+          pi.invoice_date,
+          pi.created_at,
+          p.id AS party_id,
+          p.name AS party_name,
+          p.phone AS party_phone,
+          pi.net_total::numeric(16,2),
+          pi.discount_amount::numeric(16,2),
+          0.00::numeric(16,2) AS handling_fee,
+          pi.status,
+          COALESCE((
+            SELECT string_agg(pr.name || ' (' || pil.qty || ' ' || COALESCE(pil.unit_name, '') || ')', '\u060C ')
+            FROM app.purchase_invoice_lines pil
+            JOIN app.products pr ON pr.id = pil.product_id
+            WHERE pil.invoice_id = pi.id
+          ), '') AS items_summary,
+          COALESCE((
+            SELECT SUM(pa.amount)
+            FROM app.payment_allocations pa
+            WHERE pa.purchase_invoice_id = pi.id
+          ), 0)::numeric(16,2) AS paid_amount,
+          NULL AS destination,
+          '' AS driver_name,
+          '' AS vehicle_name,
+          pi.notes
+        FROM app.purchase_invoices pi
+        JOIN app.parties p ON p.id = pi.party_id
+        WHERE NOT pi.is_deleted
+      ),
+      computed AS (
+        SELECT
+          *,
+          (net_total - paid_amount)::numeric(16,2) AS remaining_amount,
+          CASE
+            WHEN status = 'cancelled' THEN 'cancelled'
+            WHEN paid_amount >= net_total AND net_total > 0 THEN 'paid'
+            WHEN paid_amount > 0 THEN 'partial'
+            ELSE 'unpaid'
+          END AS computed_payment_status,
+          TO_CHAR(invoice_date, 'YYYY-MM-DD') AS invoice_date_str,
+          TO_CHAR(created_at, 'HH24:MI') AS invoice_time_str
+        FROM all_invoices
+      )
+      SELECT * FROM computed WHERE 1=1
+    `;
+    const params = [];
+    let pIdx = 1;
+    if (doc_type && doc_type !== "all") {
+      if (doc_type === "return") {
+        sql += ` AND invoice_type = 'return'`;
+      } else {
+        sql += ` AND doc_kind = $${pIdx++}`;
+        params.push(doc_type);
+      }
+    }
+    if (payment_status && payment_status !== "all") {
+      sql += ` AND computed_payment_status = $${pIdx++}`;
+      params.push(payment_status);
+    }
+    if (start_date && end_date) {
+      sql += ` AND invoice_date BETWEEN $${pIdx++} AND $${pIdx++}`;
+      params.push(start_date, end_date);
+    }
+    if (search && search.trim()) {
+      sql += ` AND (invoice_no ILIKE $${pIdx} OR party_name ILIKE $${pIdx} OR party_phone ILIKE $${pIdx})`;
+      params.push(`%${search.trim()}%`);
+      pIdx++;
+    }
+    sql += ` ORDER BY invoice_date DESC, created_at DESC`;
+    const res = await pool.query(sql, params);
+    return res.rows.map((r) => ({
+      ...r,
+      net_total: parseFloat(r.net_total || "0"),
+      discount_amount: parseFloat(r.discount_amount || "0"),
+      handling_fee: parseFloat(r.handling_fee || "0"),
+      paid_amount: parseFloat(r.paid_amount || "0"),
+      remaining_amount: parseFloat(r.remaining_amount || "0")
+    }));
+  });
   fastify2.get("/sales", async (req, reply) => {
     const { party_id, status, start_date, end_date } = req.query;
     let query = `
@@ -142114,7 +142375,12 @@ var invoicesRoutes = async (fastify2) => {
         partyId: body.partyId,
         invoiceDate: body.invoiceDate || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
         handlingFee: body.handlingFee || 0,
+        discountAmount: body.discountAmount || 0,
         amountPaidNow: body.amountPaidNow || 0,
+        cashAccountId: body.cashAccountId,
+        driverId: body.driverId,
+        vehicleId: body.vehicleId,
+        destination: body.destination,
         notes: body.notes,
         lines: body.lines
       });
@@ -142123,7 +142389,8 @@ var invoicesRoutes = async (fastify2) => {
           client,
           id,
           body.userId || "00000000-0000-0000-0000-000000000001",
-          body.amountPaidNow || 0
+          body.amountPaidNow || 0,
+          body.cashAccountId
         );
       }
       return id;
@@ -142132,13 +142399,14 @@ var invoicesRoutes = async (fastify2) => {
   });
   fastify2.post("/sales/:id/approve", async (req, reply) => {
     const { id } = req.params;
-    const { amountPaidNow, userId } = req.body;
+    const { amountPaidNow, cashAccountId, userId } = req.body;
     await withTransaction(async (client) => {
       await approveSalesInvoice(
         client,
         id,
         userId || "00000000-0000-0000-0000-000000000001",
-        amountPaidNow || 0
+        amountPaidNow || 0,
+        cashAccountId
       );
     });
     return { status: "approved" };
@@ -142276,6 +142544,50 @@ var inventoryRoutes = async (fastify2) => {
       unit_cost: parseFloat(r.unit_cost || "0")
     }));
   });
+  fastify2.get("/:id/reserved-breakdown", async (req, reply) => {
+    const { id } = req.params;
+    const res = await pool.query(
+      `SELECT
+        o.id AS order_id,
+        o.order_no,
+        TO_CHAR(o.order_date, 'YYYY-MM-DD') AS order_date,
+        p.id AS party_id,
+        p.name AS customer_name,
+        p.phone AS customer_phone,
+        ol.qty_ordered AS qty_reserved,
+        ol.unit_price,
+        ol.line_total
+      FROM app.orders o
+      JOIN app.order_lines ol ON ol.order_id = o.id
+      JOIN app.parties p ON p.id = o.party_id
+      WHERE ol.product_id = $1 AND o.status = 'open' AND o.order_type = 'sales' AND NOT o.is_deleted AND NOT ol.is_deleted
+      ORDER BY o.order_date DESC`,
+      [id]
+    );
+    return res.rows;
+  });
+  fastify2.get("/:id/incoming-breakdown", async (req, reply) => {
+    const { id } = req.params;
+    const res = await pool.query(
+      `SELECT
+        o.id AS order_id,
+        o.order_no,
+        TO_CHAR(o.order_date, 'YYYY-MM-DD') AS order_date,
+        p.id AS party_id,
+        p.name AS supplier_name,
+        p.phone AS supplier_phone,
+        ol.qty_ordered AS qty_incoming,
+        ol.unit_price,
+        ol.line_total
+      FROM app.orders o
+      JOIN app.order_lines ol ON ol.order_id = o.id
+      JOIN app.parties p ON p.id = o.party_id
+      WHERE ol.product_id = $1 AND o.status = 'open' AND o.order_type = 'purchase' AND NOT o.is_deleted AND NOT ol.is_deleted
+      ORDER BY o.order_date DESC`,
+      [id]
+    );
+    return res.rows;
+  });
   fastify2.post("/adjustment", async (req, reply) => {
     const { productId, qty, reason, unitCost } = req.body;
     if (!productId || qty === void 0 || qty === 0) {
@@ -142336,337 +142648,449 @@ var inventoryRoutes = async (fastify2) => {
 // src/routes/treasury.routes.ts
 var treasuryRoutes = async (fastify2) => {
   fastify2.get("/accounts", async (req, reply) => {
-    const checkRes = await pool.query("SELECT count(*) AS count FROM app.cash_accounts WHERE NOT is_deleted");
-    if (parseInt(checkRes.rows[0].count, 10) === 0) {
-      const cashAcc = await pool.query("SELECT id FROM app.accounts WHERE code = '1010'");
-      const bankAcc = await pool.query("SELECT id FROM app.accounts WHERE code = '1020'");
-      if (cashAcc.rows.length > 0) {
-        await pool.query(
-          "INSERT INTO app.cash_accounts (name, kind, account_id) VALUES ('\u0627\u0644\u062E\u0632\u064A\u0646\u0629 \u0627\u0644\u0631\u0626\u064A\u0633\u064A\u0629', 'cashbox', $1) ON CONFLICT DO NOTHING",
-          [cashAcc.rows[0].id]
-        );
-      }
-      if (bankAcc.rows.length > 0) {
-        await pool.query(
-          "INSERT INTO app.cash_accounts (name, kind, account_id) VALUES ('\u0627\u0644\u062D\u0633\u0627\u0628 \u0627\u0644\u0628\u0646\u0643\u064A \u0627\u0644\u0631\u0626\u064A\u0633\u064A', 'bank', $1) ON CONFLICT DO NOTHING",
-          [bankAcc.rows[0].id]
-        );
-      }
-    }
     const res = await pool.query(`
       SELECT 
         ca.id,
         ca.name,
         ca.name AS name_ar,
         ca.kind,
-        ca.account_id,
-        a.code AS gl_code,
-        a.name_ar AS gl_name,
-        COALESCE(SUM(l.debit - l.credit), 0) AS balance
+        ca.opening_balance,
+        ca.is_active,
+        (
+          ca.opening_balance +
+          COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'in' AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE to_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE from_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0)
+        ) AS balance
       FROM app.cash_accounts ca
-      JOIN app.accounts a ON a.id = ca.account_id
-      LEFT JOIN app.journal_lines l ON l.account_id = a.id
       WHERE NOT ca.is_deleted
-      GROUP BY ca.id, ca.name, ca.kind, ca.account_id, a.code, a.name_ar
-      ORDER BY ca.name
+      ORDER BY ca.created_at ASC
     `);
     return res.rows.map((r) => ({
       ...r,
-      balance: parseFloat(r.balance)
+      opening_balance: parseFloat(r.opening_balance || "0"),
+      balance: parseFloat(r.balance || "0")
     }));
+  });
+  fastify2.post("/accounts", async (req, reply) => {
+    const { name, kind, opening_balance } = req.body;
+    if (!name || !name.trim()) {
+      return reply.status(400).send({ error: "\u0627\u0633\u0645 \u0627\u0644\u062D\u0633\u0627\u0628 \u0623\u0648 \u0627\u0644\u062E\u0632\u064A\u0646\u0629 \u0645\u0637\u0644\u0648\u0628" });
+    }
+    const validKinds = ["cash", "wallet", "bank", "other"];
+    const accKind = validKinds.includes(kind) ? kind : "cash";
+    const openBal = parseFloat(opening_balance || "0");
+    try {
+      const res = await pool.query(
+        `INSERT INTO app.cash_accounts (name, kind, opening_balance, is_active)
+         VALUES (trim($1), $2, $3, true)
+         RETURNING *`,
+        [name, accKind, openBal]
+      );
+      return res.rows[0];
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+  fastify2.put("/accounts/:id/toggle-active", async (req, reply) => {
+    const { id } = req.params;
+    const res = await pool.query(
+      `UPDATE app.cash_accounts
+       SET is_active = NOT is_active, updated_at = now()
+       WHERE id = $1 AND NOT is_deleted
+       RETURNING *`,
+      [id]
+    );
+    if (res.rows.length === 0) return reply.status(404).send({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+    return res.rows[0];
+  });
+  fastify2.get("/accounts/:id/statement", async (req, reply) => {
+    const { id } = req.params;
+    const accRes = await pool.query(
+      `SELECT * FROM app.cash_accounts WHERE id = $1 AND NOT is_deleted`,
+      [id]
+    );
+    if (accRes.rows.length === 0) return reply.status(404).send({ error: "\u0627\u0644\u062D\u0633\u0627\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+    const account = accRes.rows[0];
+    const movesRes = await pool.query(
+      `WITH all_moves AS (
+        -- Inbound Payments (\u0633\u0646\u062F\u0627\u062A \u0642\u0628\u0636)
+        SELECT 
+          p.payment_date::timestamp with time zone AS occurred_at,
+          '\u0633\u0646\u062F \u0642\u0628\u0636 ' || p.payment_no AS title,
+          '\u062A\u062D\u0635\u064A\u0644 \u0645\u0646: ' || pt.name AS description,
+          p.amount AS amount_in,
+          0 AS amount_out,
+          p.id AS document_id,
+          'payment_in' AS move_type
+        FROM app.payments p
+        JOIN app.parties pt ON pt.id = p.party_id
+        WHERE p.cash_account_id = $1 AND p.direction = 'in' AND p.status = 'approved' AND NOT p.is_deleted
+
+        UNION ALL
+
+        -- Outbound Payments (\u0633\u0646\u062F\u0627\u062A \u0635\u0631\u0641)
+        SELECT 
+          p.payment_date::timestamp with time zone AS occurred_at,
+          '\u0633\u0646\u062F \u0635\u0631\u0641 ' || p.payment_no AS title,
+          '\u0633\u062F\u0627\u062F \u0625\u0644\u0649: ' || pt.name AS description,
+          0 AS amount_in,
+          p.amount AS amount_out,
+          p.id AS document_id,
+          'payment_out' AS move_type
+        FROM app.payments p
+        JOIN app.parties pt ON pt.id = p.party_id
+        WHERE p.cash_account_id = $1 AND p.direction = 'out' AND p.status = 'approved' AND NOT p.is_deleted
+
+        UNION ALL
+
+        -- Expenses (\u0645\u0635\u0631\u0648\u0641\u0627\u062A)
+        SELECT 
+          e.expense_date::timestamp with time zone AS occurred_at,
+          '\u0645\u0635\u0631\u0648\u0641 ' || e.expense_no AS title,
+          c.name_ar || COALESCE(' - ' || e.notes, '') AS description,
+          0 AS amount_in,
+          e.amount AS amount_out,
+          e.id AS document_id,
+          'expense' AS move_type
+        FROM app.expenses e
+        JOIN app.expense_categories c ON c.id = e.category_id
+        WHERE e.cash_account_id = $1 AND e.status = 'approved' AND NOT e.is_deleted
+
+        UNION ALL
+
+        -- Employee Advances (\u0633\u0644\u0641\u064A\u0627\u062A)
+        SELECT 
+          et.tx_date::timestamp with time zone AS occurred_at,
+          '\u0633\u0644\u0641\u0629 \u0645\u0648\u0638\u0641' AS title,
+          emp.full_name || COALESCE(' - ' || et.reason, '') AS description,
+          0 AS amount_in,
+          et.amount AS amount_out,
+          et.id AS document_id,
+          'employee_advance' AS move_type
+        FROM app.employee_transactions et
+        JOIN app.employees emp ON emp.id = et.employee_id
+        WHERE et.cash_account_id = $1 AND et.tx_type = 'advance' AND NOT et.is_deleted
+
+        UNION ALL
+
+        -- Transfers In
+        SELECT 
+          t.transfer_date::timestamp with time zone AS occurred_at,
+          '\u062A\u062D\u0648\u064A\u0644 \u0648\u0627\u0631\u062F ' || t.transfer_no AS title,
+          '\u062A\u062D\u0648\u064A\u0644 \u0645\u0646: ' || from_acc.name || COALESCE(' - ' || t.notes, '') AS description,
+          t.amount AS amount_in,
+          0 AS amount_out,
+          t.id AS document_id,
+          'transfer_in' AS move_type
+        FROM app.cash_transfers t
+        JOIN app.cash_accounts from_acc ON from_acc.id = t.from_account_id
+        WHERE t.to_account_id = $1 AND t.status = 'approved' AND NOT t.is_deleted
+
+        UNION ALL
+
+        -- Transfers Out
+        SELECT 
+          t.transfer_date::timestamp with time zone AS occurred_at,
+          '\u062A\u062D\u0648\u064A\u0644 \u0635\u0627\u062F\u0631 ' || t.transfer_no AS title,
+          '\u062A\u062D\u0648\u064A\u0644 \u0625\u0644\u0649: ' || to_acc.name || COALESCE(' - ' || t.notes, '') AS description,
+          0 AS amount_in,
+          t.amount AS amount_out,
+          t.id AS document_id,
+          'transfer_out' AS move_type
+        FROM app.cash_transfers t
+        JOIN app.cash_accounts to_acc ON to_acc.id = t.to_account_id
+        WHERE t.from_account_id = $1 AND t.status = 'approved' AND NOT t.is_deleted
+      )
+      SELECT *,
+        $2 + SUM(amount_in - amount_out) OVER (ORDER BY occurred_at ASC, document_id ASC) AS running_balance
+      FROM all_moves
+      ORDER BY occurred_at DESC, document_id DESC`,
+      [id, parseFloat(account.opening_balance || "0")]
+    );
+    return {
+      account: {
+        ...account,
+        opening_balance: parseFloat(account.opening_balance || "0")
+      },
+      transactions: movesRes.rows.map((r) => ({
+        ...r,
+        amount_in: parseFloat(r.amount_in),
+        amount_out: parseFloat(r.amount_out),
+        running_balance: parseFloat(r.running_balance)
+      }))
+    };
   });
   fastify2.post("/transfer", async (req, reply) => {
     const { fromAccountId, toAccountId, amount, notes } = req.body;
-    if (!fromAccountId || !toAccountId || !amount || amount <= 0) {
+    if (!fromAccountId || !toAccountId || !amount || parseFloat(amount) <= 0) {
       return reply.status(400).send({ error: "\u064A\u0631\u062C\u0649 \u062A\u062D\u062F\u064A\u062F \u0627\u0644\u062D\u0633\u0627\u0628\u0627\u062A \u0648\u0645\u0628\u0644\u063A \u0627\u0644\u062A\u062D\u0648\u064A\u0644 \u0628\u0634\u0643\u0644 \u0635\u062D\u064A\u062D" });
     }
-    const journalId = await withTransaction(async (client) => {
-      const fromRes = await client.query(
-        "SELECT ca.*, a.code FROM app.cash_accounts ca JOIN app.accounts a ON a.id = ca.gl_account_id WHERE ca.id = $1",
-        [fromAccountId]
-      );
-      const toRes = await client.query(
-        "SELECT ca.*, a.code FROM app.cash_accounts ca JOIN app.accounts a ON a.id = ca.gl_account_id WHERE ca.id = $1",
-        [toAccountId]
-      );
-      const fromAcc = fromRes.rows[0];
-      const toAcc = toRes.rows[0];
-      return await postJournalEntry(client, {
-        entryDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
-        sourceDocType: "cash_transfer",
-        sourceDocId: fromAccountId,
-        narration: `\u062A\u062D\u0648\u064A\u0644 \u0623\u0645\u0648\u0627\u0644 \u0645\u0646 ${fromAcc.name_ar} \u0625\u0644\u0649 ${toAcc.name_ar}: ${notes || ""}`,
-        lines: [
-          {
-            accountCode: toAcc.code,
-            // Debit recipient account
-            debit: amount,
-            credit: 0,
-            description: `\u062A\u062D\u0648\u064A\u0644 \u0648\u0627\u0631\u062F \u0645\u0646 ${fromAcc.name_ar}`
-          },
-          {
-            accountCode: fromAcc.code,
-            // Credit sender account
-            debit: 0,
-            credit: amount,
-            description: `\u062A\u062D\u0648\u064A\u0644 \u0635\u0627\u062F\u0631 \u0625\u0644\u0649 ${toAcc.name_ar}`
-          }
-        ]
+    if (fromAccountId === toAccountId) {
+      return reply.status(400).send({ error: "\u0644\u0627 \u064A\u0645\u0643\u0646 \u0627\u0644\u062A\u062D\u0648\u064A\u0644 \u0644\u0646\u0641\u0633 \u0627\u0644\u062D\u0633\u0627\u0628" });
+    }
+    try {
+      const transferId = await withTransaction(async (client) => {
+        const nextNumRes = await client.query("SELECT app.next_doc_number('cash_transfer') AS num");
+        const tNo = nextNumRes.rows[0].num;
+        const res = await client.query(
+          `INSERT INTO app.cash_transfers (
+            transfer_no, transfer_date, from_account_id, to_account_id, amount, notes, status
+          ) VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, 'approved')
+          RETURNING id`,
+          [tNo, fromAccountId, toAccountId, parseFloat(amount), notes || null]
+        );
+        return res.rows[0].id;
       });
-    });
-    return { status: "success", journalId };
+      return { status: "success", transferId };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
   });
   fastify2.post("/count", async (req, reply) => {
     const { cashAccountId, countedAmount, notes } = req.body;
     if (!cashAccountId || countedAmount === void 0) {
       return reply.status(400).send({ error: "\u064A\u0631\u062C\u0649 \u062A\u062D\u062F\u064A\u062F \u0627\u0644\u062D\u0633\u0627\u0628 \u0648\u0627\u0644\u0645\u0628\u0644\u063A \u0627\u0644\u0645\u062C\u0631\u0648\u062F" });
     }
-    const res = await withTransaction(async (client) => {
-      const accRes = await client.query(
-        `SELECT ca.*, COALESCE(SUM(l.debit - l.credit), 0) AS recorded_balance
-         FROM app.cash_accounts ca
-         JOIN app.accounts a ON a.id = ca.gl_account_id
-         LEFT JOIN app.journal_lines l ON l.account_id = a.id
-         WHERE ca.id = $1
-         GROUP BY ca.id`,
+    try {
+      const balRes = await pool.query(
+        `SELECT (
+          ca.opening_balance +
+          COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'in' AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE to_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE from_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0)
+        ) AS recorded_balance
+        FROM app.cash_accounts ca
+        WHERE ca.id = $1`,
         [cashAccountId]
       );
-      const recorded = parseFloat(accRes.rows[0]?.recorded_balance || "0");
-      const difference = parseFloat(countedAmount) - recorded;
-      const countRes = await client.query(
+      const recorded = parseFloat(balRes.rows[0]?.recorded_balance || "0");
+      const actual = parseFloat(countedAmount);
+      const diff = actual - recorded;
+      const countRes = await pool.query(
         `INSERT INTO app.cash_counts (
-          cash_account_id, count_date, recorded_balance, counted_balance, difference, notes
-        ) VALUES ($1, now()::date, $2, $3, $4, $5)
+          cash_account_id, counted_at, recorded_balance, actual_balance, difference, notes
+        ) VALUES ($1, now(), $2, $3, $4, $5)
         RETURNING *`,
-        [cashAccountId, recorded, countedAmount, difference, notes || null]
+        [cashAccountId, recorded, actual, diff, notes || null]
       );
-      return countRes.rows[0];
-    });
-    return res;
+      return {
+        status: "success",
+        count: countRes.rows[0],
+        difference: diff,
+        isBalanced: Math.abs(diff) < 0.01
+      };
+    } catch (err) {
+      return reply.status(400).send({ error: err.message });
+    }
   });
 };
-
-// src/domain/payroll.ts
-async function recordAttendance(client, records) {
-  for (const rec of records) {
-    await client.query(
-      `INSERT INTO app.attendance (
-        employee_id, attendance_date, fraction, notes
-      ) VALUES ($1, $2, $3, $4)
-      ON CONFLICT (employee_id, attendance_date)
-      DO UPDATE SET fraction = EXCLUDED.fraction, notes = EXCLUDED.notes`,
-      [rec.employeeId, rec.attendanceDate, rec.fraction, rec.notes || null]
-    );
-    if (rec.advanceAmount && rec.advanceAmount > 0) {
-      await client.query(
-        `INSERT INTO app.employee_transactions (
-          employee_id, tx_date, tx_type, amount, notes
-        ) VALUES ($1, $2, 'advance', $3, $4)`,
-        [rec.employeeId, rec.attendanceDate, rec.advanceAmount, rec.notes || "\u0633\u0644\u0641\u0629 \u064A\u0648\u0645\u064A\u0629"]
-      );
-      const empRes = await client.query("SELECT full_name AS name FROM app.employees WHERE id = $1", [
-        rec.employeeId
-      ]);
-      const empName = empRes.rows[0]?.name || "";
-      await postJournalEntry(client, {
-        entryDate: rec.attendanceDate,
-        sourceDocType: "employee_advance",
-        sourceDocId: rec.employeeId,
-        narration: `\u0633\u0644\u0641\u0629 \u0646\u0642\u062F\u064A\u0629 \u0644\u0644\u0645\u0648\u0638\u0641: ${empName}`,
-        lines: [
-          {
-            accountCode: "1150",
-            // Employee Advances (سلف الموظفين)
-            debit: rec.advanceAmount,
-            credit: 0,
-            description: `\u0633\u0644\u0641\u0629 ${empName}`
-          },
-          {
-            accountCode: "1010",
-            // Cash (الصندوق)
-            debit: 0,
-            credit: rec.advanceAmount,
-            description: `\u0635\u0631\u0641 \u0633\u0644\u0641\u0629 ${empName}`
-          }
-        ]
-      });
-    }
-  }
-}
-async function calculateEmployeePeriodStatement(client, employeeId, startDate, endDate) {
-  const empRes = await client.query("SELECT * FROM app.employees WHERE id = $1", [employeeId]);
-  if (empRes.rows.length === 0) throw new Error("\u0627\u0644\u0645\u0648\u0638\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F");
-  const emp = empRes.rows[0];
-  const attRes = await client.query(
-    `SELECT COALESCE(SUM(fraction), 0) AS total_days
-     FROM app.attendance
-     WHERE employee_id = $1 AND attendance_date BETWEEN $2 AND $3`,
-    [employeeId, startDate, endDate]
-  );
-  const totalDays = parseFloat(attRes.rows[0]?.total_days || "0");
-  const dailyRate = parseFloat(emp.daily_rate || "0");
-  const totalEarned = totalDays * dailyRate;
-  const txRes = await client.query(
-    `SELECT tx_type, COALESCE(SUM(amount), 0) AS total
-     FROM app.employee_transactions
-     WHERE employee_id = $1 AND tx_date BETWEEN $2 AND $3
-     GROUP BY tx_type`,
-    [employeeId, startDate, endDate]
-  );
-  let advances = 0;
-  let bonuses = 0;
-  let deductions = 0;
-  for (const row of txRes.rows) {
-    const amt = parseFloat(row.total);
-    if (row.tx_type === "advance") advances += amt;
-    else if (row.tx_type === "bonus") bonuses += amt;
-    else if (row.tx_type === "deduction") deductions += amt;
-  }
-  const openingDebt = parseFloat(emp.opening_debt || "0");
-  const netBeforeDebt = totalEarned + bonuses - deductions - advances;
-  return {
-    employeeId,
-    name: emp.name,
-    jobTitle: emp.job_title,
-    dailyRate,
-    totalDays,
-    totalEarned,
-    advances,
-    bonuses,
-    deductions,
-    openingDebt,
-    netPayable: netBeforeDebt
-  };
-}
-async function settleEmployeePayroll(client, params) {
-  const calc = await calculateEmployeePeriodStatement(
-    client,
-    params.employeeId,
-    params.periodStart,
-    params.periodEnd
-  );
-  const bonus = params.bonuses || 0;
-  const ded = params.deductions || 0;
-  const debtRepayment = params.debtRepayment || 0;
-  const netPayable = calc.totalEarned + calc.bonuses + bonus - (calc.advances + calc.deductions + ded + debtRepayment);
-  if (bonus > 0) {
-    await client.query(
-      `INSERT INTO app.employee_transactions (employee_id, tx_date, tx_type, amount, notes)
-       VALUES ($1, $2, 'bonus', $3, $4)`,
-      [params.employeeId, params.periodEnd, bonus, "\u0645\u0643\u0627\u0641\u0623\u0629 \u062A\u0633\u0648\u064A\u0629 \u0631\u0627\u062A\u0628"]
-    );
-  }
-  if (ded > 0) {
-    await client.query(
-      `INSERT INTO app.employee_transactions (employee_id, tx_date, tx_type, amount, notes)
-       VALUES ($1, $2, 'deduction', $3, $4)`,
-      [params.employeeId, params.periodEnd, ded, "\u062E\u0635\u0645 \u062A\u0633\u0648\u064A\u0629 \u0631\u0627\u062A\u0628"]
-    );
-  }
-  if (debtRepayment > 0) {
-    await client.query(
-      `UPDATE app.employees 
-       SET opening_debt = GREATEST(0, opening_debt - $1)
-       WHERE id = $2`,
-      [debtRepayment, params.employeeId]
-    );
-  }
-  const totalWagesExpense = calc.totalEarned + calc.bonuses + bonus - (calc.deductions + ded);
-  const journalId = await postJournalEntry(client, {
-    entryDate: params.periodEnd,
-    sourceDocType: "payroll_settlement",
-    sourceDocId: params.employeeId,
-    narration: `\u062A\u0633\u0648\u064A\u0629 \u0623\u062C\u0648\u0631 \u0627\u0644\u0645\u0648\u0638\u0641: ${calc.name}`,
-    lines: [
-      {
-        accountCode: "5100",
-        // Wages Expense (أجور العاملين)
-        debit: totalWagesExpense,
-        credit: 0,
-        description: `\u0623\u062C\u0648\u0631 ${calc.name} \u0639\u0646 \u0627\u0644\u0641\u062A\u0631\u0629 ${params.periodStart} \u0625\u0644\u0649 ${params.periodEnd}`
-      },
-      {
-        accountCode: "1010",
-        // Cash (الصندوق)
-        debit: 0,
-        credit: totalWagesExpense,
-        description: `\u0635\u0631\u0641 \u0623\u062C\u0648\u0631 ${calc.name}`
-      }
-    ]
-  });
-  return journalId;
-}
 
 // src/routes/payroll.routes.ts
 var payrollRoutes = async (fastify2) => {
   fastify2.get("/employees", async (req, reply) => {
     const res = await pool.query(
-      `SELECT e.*, 
+      `SELECT e.id,
+              e.code,
               e.full_name AS name,
-              COALESCE(e.daily_rate, 0) AS daily_rate,
-              0.00 AS opening_debt
+              e.job_title,
+              COALESCE(e.daily_rate, 0)::numeric(16,2) AS daily_rate,
+              e.phone,
+              e.is_active,
+              e.created_at
        FROM app.employees e
        WHERE NOT e.is_deleted
-       ORDER BY e.full_name`
+       ORDER BY e.code ASC, e.full_name ASC`
     );
     return res.rows.map((r) => ({
       ...r,
-      daily_rate: parseFloat(r.daily_rate),
-      opening_debt: parseFloat(r.opening_debt)
+      daily_rate: parseFloat(r.daily_rate || "0")
     }));
   });
   fastify2.post("/employees", async (req, reply) => {
     const { name, job_title, daily_rate, phone } = req.body;
-    if (!name) return reply.status(400).send({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0638\u0641 \u0645\u0637\u0644\u0648\u0628" });
+    if (!name || !name.trim()) {
+      return reply.status(400).send({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0638\u0641 \u0645\u0637\u0644\u0648\u0628" });
+    }
+    const nextCodeRes = await pool.query("SELECT app.next_doc_number('employee') AS code");
+    const empCode = nextCodeRes.rows[0]?.code || "E0001";
     const res = await pool.query(
-      `INSERT INTO app.employees (full_name, job_title, daily_rate, phone)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *, full_name AS name`,
-      [name, job_title || null, daily_rate || 0, phone || null]
+      `INSERT INTO app.employees (code, full_name, job_title, daily_rate, phone)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, code, full_name AS name, job_title, daily_rate, phone, is_active`,
+      [empCode, name.trim(), job_title?.trim() || null, daily_rate || 0, phone?.trim() || null]
     );
     return res.rows[0];
   });
-  fastify2.post("/attendance", async (req, reply) => {
-    const { records } = req.body;
-    if (!records || !Array.isArray(records) || records.length === 0) {
-      return reply.status(400).send({ error: "\u064A\u0631\u062C\u0649 \u062A\u0642\u062F\u064A\u0645 \u0633\u062C\u0644\u0627\u062A \u0627\u0644\u062D\u0636\u0648\u0631" });
-    }
-    await withTransaction(async (client) => {
-      await recordAttendance(client, records);
-    });
-    return { status: "recorded" };
-  });
-  fastify2.get("/statement/:employeeId", async (req, reply) => {
-    const { employeeId } = req.params;
-    const { start_date, end_date } = req.query;
-    if (!start_date || !end_date) {
-      return reply.status(400).send({ error: "\u064A\u0631\u062C\u0649 \u062A\u062D\u062F\u064A\u062F \u062A\u0627\u0631\u064A\u062E \u0627\u0644\u0628\u062F\u0627\u064A\u0629 \u0648\u0627\u0644\u0646\u0647\u0627\u064A\u0629" });
-    }
-    const statement = await calculateEmployeePeriodStatement(
-      pool,
-      employeeId,
-      start_date,
-      end_date
+  fastify2.get("/employees/:id/month-summary", async (req, reply) => {
+    const { id } = req.params;
+    const { year, month } = req.query;
+    const y = parseInt(year || (/* @__PURE__ */ new Date()).getFullYear(), 10);
+    const m = parseInt(month || (/* @__PURE__ */ new Date()).getMonth() + 1, 10);
+    const startDate = `${y}-${String(m).padStart(2, "0")}-01`;
+    const lastDay = new Date(y, m, 0).getDate();
+    const endDate = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    const empRes = await pool.query(
+      "SELECT id, code, full_name AS name, job_title, daily_rate, phone FROM app.employees WHERE id = $1",
+      [id]
     );
-    return statement;
-  });
-  fastify2.post("/settle", async (req, reply) => {
-    const body = req.body;
-    if (!body.employeeId || !body.periodStart || !body.periodEnd) {
-      return reply.status(400).send({ error: "\u064A\u0631\u062C\u0649 \u062A\u062D\u062F\u064A\u062F \u0627\u0644\u0645\u0648\u0638\u0641 \u0648\u0627\u0644\u0641\u062A\u0631\u0629" });
+    if (empRes.rows.length === 0) {
+      return reply.status(404).send({ error: "\u0627\u0644\u0645\u0648\u0638\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
     }
-    const journalId = await withTransaction(async (client) => {
-      return await settleEmployeePayroll(client, {
-        employeeId: body.employeeId,
-        periodStart: body.periodStart,
-        periodEnd: body.periodEnd,
-        bonuses: body.bonuses,
-        deductions: body.deductions,
-        debtRepayment: body.debtRepayment,
-        notes: body.notes
-      });
+    const emp = empRes.rows[0];
+    const dailyRate = parseFloat(emp.daily_rate || "0");
+    const attRes = await pool.query(
+      `SELECT TO_CHAR(work_date, 'YYYY-MM-DD') AS work_date,
+              status,
+              day_fraction::numeric(4,2) AS day_fraction,
+              notes
+       FROM app.attendance
+       WHERE employee_id = $1 AND work_date BETWEEN $2 AND $3 AND NOT is_deleted
+       ORDER BY work_date ASC`,
+      [id, startDate, endDate]
+    );
+    const attendanceMap = {};
+    let totalDays = 0;
+    for (const r of attRes.rows) {
+      attendanceMap[r.work_date] = {
+        status: r.status,
+        fraction: parseFloat(r.day_fraction),
+        notes: r.notes
+      };
+      totalDays += parseFloat(r.day_fraction);
+    }
+    const txRes = await pool.query(
+      `SELECT t.id,
+              TO_CHAR(t.tx_date, 'YYYY-MM-DD') AS tx_date,
+              t.tx_type,
+              t.amount::numeric(16,2) AS amount,
+              t.reason,
+              t.notes,
+              t.cash_account_id,
+              ca.name AS cash_account_name
+       FROM app.employee_transactions t
+       LEFT JOIN app.cash_accounts ca ON ca.id = t.cash_account_id
+       WHERE t.employee_id = $1 AND t.tx_date BETWEEN $2 AND $3 AND NOT t.is_deleted
+       ORDER BY t.tx_date ASC, t.created_at ASC`,
+      [id, startDate, endDate]
+    );
+    const deductions = [];
+    const advances = [];
+    const bonuses = [];
+    let totalDeductions = 0;
+    let totalAdvances = 0;
+    let totalBonuses = 0;
+    for (const tx of txRes.rows) {
+      const amt = parseFloat(tx.amount || "0");
+      const item = { ...tx, amount: amt };
+      if (tx.tx_type === "deduction") {
+        deductions.push(item);
+        totalDeductions += amt;
+      } else if (tx.tx_type === "advance") {
+        advances.push(item);
+        totalAdvances += amt;
+      } else if (tx.tx_type === "bonus") {
+        bonuses.push(item);
+        totalBonuses += amt;
+      }
+    }
+    const netRes = await pool.query(
+      "SELECT app.employee_net_due($1, $2::date, $3::date) AS net_due",
+      [id, startDate, endDate]
+    );
+    const netDue = parseFloat(netRes.rows[0]?.net_due || "0");
+    return {
+      employee: {
+        ...emp,
+        daily_rate: dailyRate
+      },
+      year: y,
+      month: m,
+      startDate,
+      endDate,
+      daysInMonth: lastDay,
+      attendanceMap,
+      deductions,
+      advances,
+      bonuses,
+      summary: {
+        totalDays,
+        dailyRate,
+        earnedAmount: totalDays * dailyRate,
+        totalBonuses,
+        totalDeductions,
+        totalAdvances,
+        netDue
+      }
+    };
+  });
+  fastify2.post("/employees/:id/attendance-day", async (req, reply) => {
+    const { id } = req.params;
+    const { work_date, status, notes } = req.body;
+    if (!work_date || !status) {
+      return reply.status(400).send({ error: "\u0627\u0644\u062A\u0627\u0631\u064A\u062E \u0648\u062D\u0627\u0644\u0629 \u0627\u0644\u062D\u0636\u0648\u0631 \u0645\u0637\u0644\u0648\u0628\u0627\u0646" });
+    }
+    let fraction = 1;
+    if (status === "half") fraction = 0.5;
+    else if (status === "absent" || status === "leave") fraction = 0;
+    const empRes = await pool.query("SELECT daily_rate FROM app.employees WHERE id = $1", [id]);
+    const dailyRate = parseFloat(empRes.rows[0]?.daily_rate || "0");
+    await pool.query(
+      `INSERT INTO app.attendance (
+        employee_id, work_date, status, day_fraction, daily_rate_snapshot, notes, updated_at
+      ) VALUES ($1, $2::date, $3, $4, $5, $6, NOW())
+      ON CONFLICT (tenant_id, employee_id, work_date)
+      DO UPDATE SET status = EXCLUDED.status,
+                    day_fraction = EXCLUDED.day_fraction,
+                    daily_rate_snapshot = EXCLUDED.daily_rate_snapshot,
+                    notes = EXCLUDED.notes,
+                    updated_at = NOW()`,
+      [id, work_date, status, fraction, dailyRate, notes || null]
+    );
+    return { status: "saved", work_date, newStatus: status, fraction };
+  });
+  fastify2.post("/employees/:id/transaction", async (req, reply) => {
+    const { id } = req.params;
+    const { tx_type, tx_date, amount, reason, cash_account_id, notes } = req.body;
+    if (!tx_type || !["advance", "deduction", "bonus"].includes(tx_type)) {
+      return reply.status(400).send({ error: "\u0646\u0648\u0639 \u0627\u0644\u0639\u0645\u0644\u064A\u0629 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
+    }
+    const numAmount = parseFloat(amount || "0");
+    if (numAmount <= 0) {
+      return reply.status(400).send({ error: "\u064A\u0631\u062C\u0649 \u0625\u062F\u062E\u0627\u0644 \u0645\u0628\u0644\u063A \u0635\u062D\u064A\u062D \u0623\u0643\u0628\u0631 \u0645\u0646 \u0635\u0641\u0631" });
+    }
+    if (!reason || !reason.trim()) {
+      return reply.status(400).send({ error: "\u0627\u0644\u0633\u0628\u0628 \u0625\u0644\u0632\u0627\u0645\u064A \u0644\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u0639\u0645\u0644\u064A\u0629" });
+    }
+    if (tx_type === "advance" && !cash_account_id) {
+      return reply.status(400).send({ error: "\u0627\u062E\u062A\u0631 \u0627\u0644\u062E\u0632\u064A\u0646\u0629/\u0627\u0644\u0645\u062D\u0641\u0638\u0629/\u0627\u0644\u062D\u0633\u0627\u0628 \u0627\u0644\u0645\u0646\u0635\u0631\u0641 \u0645\u0646\u0647 \u0627\u0644\u0633\u0644\u0641\u0629" });
+    }
+    const res = await withTransaction(async (client) => {
+      const insRes = await client.query(
+        `INSERT INTO app.employee_transactions (
+          employee_id, tx_date, tx_type, amount, reason, cash_account_id, notes
+        ) VALUES ($1, $2::date, $3, $4, $5, $6, $7)
+        RETURNING *`,
+        [id, tx_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), tx_type, numAmount, reason.trim(), cash_account_id || null, notes || null]
+      );
+      return insRes.rows[0];
     });
-    return { status: "settled", journalId };
+    return { status: "created", transaction: res };
+  });
+  fastify2.delete("/employees/transactions/:txId", async (req, reply) => {
+    const { txId } = req.params;
+    const { approvalId } = req.body;
+    if (!approvalId) {
+      return reply.status(403).send({ error: "\u0645\u0648\u0627\u0641\u0642\u0629 \u0627\u0644\u0645\u062F\u064A\u0631 \u0645\u0637\u0644\u0648\u0628\u0629 \u0644\u062A\u0639\u062F\u064A\u0644 \u0623\u0648 \u062D\u0630\u0641 \u062D\u0631\u0643\u0629 \u0627\u0644\u0645\u0648\u0638\u0641" });
+    }
+    await pool.query("UPDATE app.employee_transactions SET is_deleted = true, deleted_at = NOW() WHERE id = $1", [txId]);
+    return { status: "deleted" };
   });
 };
 
@@ -142824,6 +143248,7 @@ var expensesRoutes = async (fastify2) => {
   fastify2.post("/", async (req, reply) => {
     const { categoryId, expenseDate, amount, paymentMethod, payee, description, cashAccountId } = req.body;
     if (!amount || amount <= 0) return reply.status(400).send({ error: "\u0627\u0644\u0645\u0628\u0644\u063A \u0645\u0637\u0644\u0648\u0628 \u0648\u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 \u0623\u0643\u0628\u0631 \u0645\u0646 \u0627\u0644\u0635\u0641\u0631" });
+    if (!cashAccountId) return reply.status(400).send({ error: "\u0627\u062E\u062A\u0631 \u0627\u0644\u062E\u0632\u064A\u0646\u0629/\u0627\u0644\u0645\u062D\u0641\u0638\u0629/\u0627\u0644\u062D\u0633\u0627\u0628" });
     const expenseId = await withTransaction(async (client) => {
       let finalCatId = categoryId;
       if (!finalCatId) {
@@ -142893,62 +143318,39 @@ var expensesRoutes = async (fastify2) => {
 // src/routes/reports.routes.ts
 var reportsRoutes = async (fastify2) => {
   fastify2.get("/dashboard", async (req, reply) => {
-    const recRes = await pool.query(`
-      SELECT COALESCE(SUM(balance), 0) AS total_receivables
-      FROM (
-        SELECT SUM(l.debit - l.credit) AS balance
-        FROM app.parties p
-        JOIN app.journal_lines l ON l.party_id = p.id
-        JOIN app.accounts a ON a.id = l.account_id AND a.system_role = 'receivable'
-        WHERE p.is_customer AND NOT p.is_deleted
-        GROUP BY p.id
-        HAVING SUM(l.debit - l.credit) > 0
-      ) sub
-    `);
-    const payRes = await pool.query(`
-      SELECT COALESCE(SUM(balance), 0) AS total_payables
-      FROM (
-        SELECT SUM(l.credit - l.debit) AS balance
-        FROM app.parties p
-        JOIN app.journal_lines l ON l.party_id = p.id
-        JOIN app.accounts a ON a.id = l.account_id AND a.system_role = 'payable'
-        WHERE p.is_supplier AND NOT p.is_deleted
-        GROUP BY p.id
-        HAVING SUM(l.credit - l.debit) > 0
-      ) sub
-    `);
-    const cashRes = await pool.query(`
-      SELECT COALESCE(SUM(l.debit - l.credit), 0) AS total_cash
-      FROM app.accounts a
-      JOIN app.journal_lines l ON l.account_id = a.id
-      WHERE a.system_role IN ('cash', 'bank')
-    `);
-    const todaySales = await pool.query(`
-      SELECT COALESCE(SUM(net_total), 0) AS total
-      FROM app.sales_invoices
-      WHERE invoice_date = CURRENT_DATE AND status = 'approved'
-    `);
-    const monthSales = await pool.query(`
-      SELECT COALESCE(SUM(net_total), 0) AS total
-      FROM app.sales_invoices
-      WHERE date_trunc('month', invoice_date) = date_trunc('month', CURRENT_DATE) AND status = 'approved'
-    `);
-    const bookRes = await pool.query(`
-      SELECT 
-        COUNT(DISTINCT o.id) AS pending_orders_count,
-        COALESCE(SUM(ol.qty_ordered), 0) AS remaining_qty
-      FROM app.orders o
-      JOIN app.order_lines ol ON ol.order_id = o.id
-      WHERE o.status = 'confirmed' AND o.order_type = 'sales'
+    const metricsRes = await pool.query(`SELECT * FROM app.v_dashboard_metrics;`);
+    const metrics = metricsRes.rows[0] || {};
+    const cashBreakdown = await pool.query(`
+      SELECT
+        ca.id,
+        ca.name,
+        ca.kind,
+        (
+          ca.opening_balance +
+          COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'in' AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0)
+        ) AS balance
+      FROM app.cash_accounts ca
+      WHERE ca.is_active = true AND NOT ca.is_deleted
+      ORDER BY ca.name ASC;
     `);
     return {
-      totalReceivables: parseFloat(recRes.rows[0]?.total_receivables || "0"),
-      totalPayables: parseFloat(payRes.rows[0]?.total_payables || "0"),
-      totalCash: parseFloat(cashRes.rows[0]?.total_cash || "0"),
-      salesToday: parseFloat(todaySales.rows[0]?.total || "0"),
-      salesMonth: parseFloat(monthSales.rows[0]?.total || "0"),
-      pendingBookingsCount: parseInt(bookRes.rows[0]?.pending_orders_count || "0", 10),
-      pendingBookedQty: parseFloat(bookRes.rows[0]?.remaining_qty || "0")
+      total_receivables: Number(metrics.total_receivables || 0),
+      total_payables: Number(metrics.total_payables || 0),
+      current_liquidity: Number(metrics.current_liquidity || 0),
+      current_month_sales: Number(metrics.current_month_sales || 0),
+      today_sales: Number(metrics.today_sales || 0),
+      active_customers_count: Number(metrics.active_customers_count || 0),
+      active_suppliers_count: Number(metrics.active_suppliers_count || 0),
+      active_employees_count: Number(metrics.active_employees_count || 0),
+      cash_accounts_breakdown: cashBreakdown.rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        kind: r.kind,
+        balance: Number(r.balance || 0)
+      }))
     };
   });
   fastify2.get("/trial-balance", async (req, reply) => {
@@ -143175,6 +143577,44 @@ var auditRoutes = async (fastify2) => {
 
 // src/domain/importer.ts
 var import_exceljs = __toESM(require_excel());
+function parseCellNumber(val) {
+  if (!val) return 0;
+  if (typeof val === "number") return isNaN(val) ? 0 : val;
+  if (typeof val === "object" && val.result !== void 0) {
+    const num2 = parseFloat(val.result);
+    return isNaN(num2) ? 0 : num2;
+  }
+  const clean = val.toString().replace(/,/g, "").trim();
+  const num = parseFloat(clean);
+  return isNaN(num) ? 0 : num;
+}
+function parseCellString(val) {
+  if (!val) return "";
+  if (typeof val === "object" && val.result !== void 0) {
+    return val.result ? val.result.toString().trim() : "";
+  }
+  return val.toString().trim();
+}
+function parseCellDate(val) {
+  if (!val) return void 0;
+  if (val instanceof Date) {
+    return val.toISOString().slice(0, 10);
+  }
+  const str = parseCellString(val);
+  if (!str) return void 0;
+  if (str.includes("/")) {
+    const parts = str.split("/");
+    if (parts.length === 3) {
+      const p0 = parseInt(parts[0], 10);
+      const p1 = parseInt(parts[1], 10);
+      const p2 = parseInt(parts[2], 10);
+      if (p2 > 1e3) {
+        return `${p2}-${String(p1).padStart(2, "0")}-${String(p0).padStart(2, "0")}`;
+      }
+    }
+  }
+  return str.slice(0, 10);
+}
 async function parseExcelWorkbook(buffer) {
   const workbook = new import_exceljs.default.Workbook();
   await workbook.xlsx.load(buffer);
@@ -143182,229 +143622,269 @@ async function parseExcelWorkbook(buffer) {
     customersFound: [],
     suppliersFound: [],
     productsFound: [],
+    employeesFound: [],
+    equipmentFound: [],
     totals: {
       customerPurchases: 0,
       customerPaid: 0,
+      customerRemaining: 0,
       supplierPurchases: 0,
-      supplierPaid: 0
+      supplierPaid: 0,
+      supplierRemaining: 0,
+      salesLinesCount: 0,
+      paymentsCount: 0
     },
     warnings: []
   };
-  const parseTableByHeaders = (sheet) => {
-    let headerRowIdx = -1;
-    const colMap = {};
-    sheet.eachRow((row, rowIdx) => {
-      if (headerRowIdx !== -1) return;
-      row.eachCell((cell, colIdx) => {
-        const val = cell.value?.toString().trim().toLowerCase() || "";
-        if (val.includes("\u0627\u0633\u0645 \u0627\u0644\u0639\u0645\u064A\u0644") || val.includes("\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641") || val.includes("\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0631\u062F") || val === "\u0627\u0644\u0639\u0645\u064A\u0644" || val === "\u0627\u0644\u0635\u0646\u0641" || val === "\u0627\u0644\u0645\u0648\u0631\u062F" || val === "customer" || val === "product" || val === "supplier") {
-          headerRowIdx = rowIdx;
+  const settingsSheet = workbook.getWorksheet("\u0627\u0644\u0627\u0639\u062F\u0627\u062F\u0627\u062A") || workbook.getWorksheet("\u0627\u0644\u0623\u0639\u062F\u0627\u062F\u0627\u062A") || workbook.getWorksheet("Settings");
+  if (settingsSheet) {
+    settingsSheet.eachRow((row, rowNumber) => {
+      if (rowNumber >= 2) {
+        const prodName = parseCellString(row.getCell(2).value);
+        const prodUnit = parseCellString(row.getCell(3).value);
+        const prodCode = parseCellString(row.getCell(4).value);
+        const prodPrice = parseCellNumber(row.getCell(5).value);
+        if (prodName && prodName !== "\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641" && !preview.productsFound.some((p) => p.name === prodName)) {
+          preview.productsFound.push({
+            code: prodCode || void 0,
+            name: prodName,
+            unit: prodUnit || void 0,
+            price: prodPrice
+          });
         }
-      });
-      if (headerRowIdx === rowIdx) {
-        row.eachCell((cell, colIdx) => {
-          const val = cell.value?.toString().trim().toLowerCase() || "";
-          if (val.includes("\u0627\u0633\u0645 \u0627\u0644\u0639\u0645\u064A\u0644") || val === "\u0627\u0644\u0639\u0645\u064A\u0644" || val.includes("customer")) colMap["customer_name"] = colIdx;
-          if (val.includes("\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0631\u062F") || val === "\u0627\u0644\u0645\u0648\u0631\u062F" || val.includes("supplier")) colMap["supplier_name"] = colIdx;
-          if (val.includes("\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641") || val === "\u0627\u0644\u0635\u0646\u0641" || val.includes("\u0627\u0644\u0645\u0646\u062A\u062C") || val.includes("product")) colMap["product_name"] = colIdx;
-          if (val.includes("\u0643\u0648\u062F") || val.includes("code")) colMap["code"] = colIdx;
-          if (val.includes("\u0647\u0627\u062A\u0641") || val.includes("\u062A\u0644\u064A\u0641\u0648\u0646") || val.includes("\u0645\u0648\u0628\u0627\u064A\u0644") || val.includes("phone")) colMap["phone"] = colIdx;
-          if (val.includes("\u0648\u062D\u062F") || val.includes("unit")) colMap["unit"] = colIdx;
-          if (val.includes("\u0633\u0639\u0631") || val.includes("price")) colMap["price"] = colIdx;
-          if (val.includes("\u0631\u0635\u064A\u062F") || val.includes("balance")) colMap["balance"] = colIdx;
-        });
-      }
-    });
-    if (headerRowIdx === -1) return false;
-    let foundAny = false;
-    sheet.eachRow((row, rowIdx) => {
-      if (rowIdx <= headerRowIdx) return;
-      if (colMap["customer_name"]) {
-        const name = row.getCell(colMap["customer_name"]).value?.toString().trim();
-        if (name && name !== "\u0627\u0633\u0645 \u0627\u0644\u0639\u0645\u064A\u0644" && name !== "\u0627\u0644\u0639\u0645\u064A\u0644") {
-          const phone = colMap["phone"] ? row.getCell(colMap["phone"]).value?.toString().trim() : void 0;
-          const balVal = colMap["balance"] ? parseFloat(row.getCell(colMap["balance"]).value?.toString() || "0") : 0;
-          const balance = isNaN(balVal) ? 0 : balVal;
-          if (!preview.customersFound.some((c) => c.name === name)) {
-            preview.customersFound.push({ name, phone, totalPurchases: balance > 0 ? balance : 0, totalPaid: balance < 0 ? Math.abs(balance) : 0, balance });
-            foundAny = true;
-          }
+        const empName = parseCellString(row.getCell(8).value);
+        const empJob = parseCellString(row.getCell(9).value);
+        const empRate = parseCellNumber(row.getCell(10).value);
+        if (empName && empName !== "\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0638\u0641" && !preview.employeesFound.some((e) => e.name === empName)) {
+          preview.employeesFound.push({
+            name: empName,
+            jobTitle: empJob || void 0,
+            dailyRate: empRate
+          });
         }
-      }
-      if (colMap["supplier_name"]) {
-        const name = row.getCell(colMap["supplier_name"]).value?.toString().trim();
-        if (name && name !== "\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0631\u062F" && name !== "\u0627\u0644\u0645\u0648\u0631\u062F") {
-          const balVal = colMap["balance"] ? parseFloat(row.getCell(colMap["balance"]).value?.toString() || "0") : 0;
-          const balance = isNaN(balVal) ? 0 : balVal;
-          if (!preview.suppliersFound.some((s) => s.name === name)) {
-            preview.suppliersFound.push({ name, totalPurchases: balance, totalPaid: 0, balance });
-            foundAny = true;
-          }
-        }
-      }
-      if (colMap["product_name"]) {
-        const name = row.getCell(colMap["product_name"]).value?.toString().trim();
-        if (name && name !== "\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641" && name !== "\u0627\u0644\u0635\u0646\u0641") {
-          const code = colMap["code"] ? row.getCell(colMap["code"]).value?.toString().trim() : void 0;
-          const unit = colMap["unit"] ? row.getCell(colMap["unit"]).value?.toString().trim() : void 0;
-          const priceVal = colMap["price"] ? parseFloat(row.getCell(colMap["price"]).value?.toString() || "0") : 0;
-          if (!preview.productsFound.some((p) => p.name === name)) {
-            preview.productsFound.push({ code, name, unit, price: isNaN(priceVal) ? 0 : priceVal });
-            foundAny = true;
-          }
+        const eqName = parseCellString(row.getCell(14).value);
+        const eqPlate = parseCellString(row.getCell(15).value);
+        if (eqName && eqName !== "\u0627\u0633\u0645 \u0627\u0644\u0645\u0639\u062F\u0629" && !preview.equipmentFound.some((eq) => eq.name === eqName)) {
+          preview.equipmentFound.push({
+            name: eqName,
+            plateNo: eqPlate || void 0
+          });
         }
       }
     });
-    return foundAny;
-  };
-  workbook.eachSheet((sheet) => {
-    parseTableByHeaders(sheet);
-  });
-  if (preview.productsFound.length === 0) {
-    const settingsSheet = workbook.getWorksheet("\u0627\u0644\u0627\u0639\u062F\u0627\u062F\u0627\u062A") || workbook.getWorksheet("\u0627\u0644\u0623\u0639\u062F\u0627\u062F\u0627\u062A") || workbook.getWorksheet("Settings");
-    if (settingsSheet) {
-      settingsSheet.eachRow((row, rowNumber) => {
-        if (rowNumber >= 2) {
-          const nameVal = row.getCell(2).value?.toString().trim();
-          const unitVal = row.getCell(3).value?.toString().trim();
-          const codeVal = row.getCell(4).value?.toString().trim();
-          const priceVal = parseFloat(row.getCell(5).value?.toString() || "0");
-          if (nameVal && nameVal !== "\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641") {
-            preview.productsFound.push({
-              code: codeVal,
-              name: nameVal,
-              unit: unitVal,
-              price: isNaN(priceVal) ? 0 : priceVal
-            });
-          }
+  }
+  const custSheet = workbook.getWorksheet("\u062D\u0633\u0627\u0628\u0627\u062A \u0627\u0644\u0639\u0645\u0644\u0627\u0621") || workbook.getWorksheet("\u0627\u0644\u0639\u0645\u0644\u0627\u0621");
+  if (custSheet) {
+    const blockStarts = [];
+    custSheet.eachRow((row, rowIdx) => {
+      const cellC = parseCellString(row.getCell(3).value);
+      if (cellC === "\u0627\u0633\u0645 \u0627\u0644\u0639\u0645\u064A\u0644") {
+        blockStarts.push(rowIdx);
+      }
+    });
+    for (let bIdx = 0; bIdx < blockStarts.length; bIdx++) {
+      const startRow = blockStarts[bIdx];
+      const endRow = bIdx + 1 < blockStarts.length ? blockStarts[bIdx + 1] - 1 : custSheet.rowCount;
+      const headerRow = custSheet.getRow(startRow);
+      const name = parseCellString(headerRow.getCell(4).value);
+      if (!name || name === "undefined") continue;
+      const phone = parseCellString(headerRow.getCell(6).value) || void 0;
+      const category = parseCellString(headerRow.getCell(8).value) || void 0;
+      const startDate = parseCellDate(headerRow.getCell(12).value);
+      const sumRow = custSheet.getRow(startRow + 5);
+      const purchases = parseCellNumber(sumRow.getCell(3).value);
+      const paid = parseCellNumber(sumRow.getCell(4).value);
+      const remaining = parseCellNumber(sumRow.getCell(5).value);
+      const reservedQty = parseCellNumber(sumRow.getCell(9).value);
+      const salesLines = [];
+      const payments = [];
+      for (let r = startRow + 7; r <= endRow; r++) {
+        const row = custSheet.getRow(r);
+        const lineNo = parseCellNumber(row.getCell(3).value);
+        const dateStr = parseCellDate(row.getCell(6).value);
+        const prod = parseCellString(row.getCell(7).value);
+        const unit = parseCellString(row.getCell(8).value);
+        const qty = parseCellNumber(row.getCell(10).value);
+        const price = parseCellNumber(row.getCell(11).value);
+        const advance = parseCellNumber(row.getCell(12).value);
+        const payVal = parseCellNumber(row.getCell(13).value);
+        if (prod && qty > 0) {
+          salesLines.push({
+            lineNo: lineNo || salesLines.length + 1,
+            date: dateStr,
+            productName: prod,
+            unitName: unit || void 0,
+            qty,
+            unitPrice: price,
+            total: qty * price,
+            advancePaid: advance > 0 ? advance : void 0
+          });
+          preview.totals.salesLinesCount++;
         }
+        if (advance > 0) {
+          payments.push({
+            date: dateStr,
+            amount: advance,
+            notes: `\u062F\u0641\u0639\u0629 \u0645\u0642\u062F\u0645\u0629 \u0644\u0644\u0639\u0645\u064A\u0644 ${name}`
+          });
+          preview.totals.paymentsCount++;
+        }
+        if (payVal > 0) {
+          payments.push({
+            date: dateStr,
+            amount: payVal,
+            notes: `\u0633\u062F\u0627\u062F \u0645\u0646 \u0627\u0644\u0639\u0645\u064A\u0644 ${name}`
+          });
+          preview.totals.paymentsCount++;
+        }
+      }
+      preview.customersFound.push({
+        name,
+        phone,
+        category,
+        startDate,
+        totalPurchases: purchases,
+        totalPaid: paid,
+        balance: remaining,
+        reservedQty: reservedQty > 0 ? reservedQty : void 0,
+        salesLines,
+        payments
       });
+      preview.totals.customerPurchases += purchases;
+      preview.totals.customerPaid += paid;
+      preview.totals.customerRemaining += remaining;
     }
   }
-  if (preview.customersFound.length === 0) {
-    const custSheet = workbook.getWorksheet("\u062D\u0633\u0627\u0628\u0627\u062A \u0627\u0644\u0639\u0645\u0644\u0627\u0621") || workbook.getWorksheet("\u0627\u0644\u0639\u0645\u0644\u0627\u0621") || workbook.getWorksheet("Customers");
-    if (custSheet) {
-      custSheet.eachRow((row, rowNumber) => {
-        const cellC = row.getCell(3).value?.toString().trim();
-        const cellD = row.getCell(4).value?.toString().trim();
-        if (cellC === "\u0627\u0633\u0645 \u0627\u0644\u0639\u0645\u064A\u0644" && cellD) {
-          const name = cellD;
-          const phone = row.getCell(6).value?.toString().trim() || void 0;
-          const totRow = custSheet.getRow(rowNumber + 5);
-          const purchVal = parseFloat(totRow.getCell(3).value?.toString() || "0");
-          const paidVal = parseFloat(totRow.getCell(4).value?.toString() || "0");
-          const purchases = isNaN(purchVal) ? 0 : purchVal;
-          const paid = isNaN(paidVal) ? 0 : paidVal;
-          const balance = purchases - paid;
-          preview.customersFound.push({ name, phone, totalPurchases: purchases, totalPaid: paid, balance });
-          preview.totals.customerPurchases += purchases;
-          preview.totals.customerPaid += paid;
+  const suppSheet = workbook.getWorksheet("\u062D\u0633\u0627\u0628\u0627\u062A \u0627\u0644\u0645\u0648\u0631\u062F\u064A\u0646") || workbook.getWorksheet("\u0627\u0644\u0645\u0648\u0631\u062F\u064A\u0646");
+  if (suppSheet) {
+    const blockStarts = [];
+    suppSheet.eachRow((row, rowIdx) => {
+      const cellC = parseCellString(row.getCell(3).value);
+      if (cellC === "\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0631\u062F") {
+        blockStarts.push(rowIdx);
+      }
+    });
+    for (let bIdx = 0; bIdx < blockStarts.length; bIdx++) {
+      const startRow = blockStarts[bIdx];
+      const endRow = bIdx + 1 < blockStarts.length ? blockStarts[bIdx + 1] - 1 : suppSheet.rowCount;
+      const headerRow = suppSheet.getRow(startRow);
+      const name = parseCellString(headerRow.getCell(4).value);
+      if (!name || name === "undefined") continue;
+      const phone = parseCellString(headerRow.getCell(6).value) || void 0;
+      const sumRow = suppSheet.getRow(startRow + 5);
+      const purchases = parseCellNumber(sumRow.getCell(3).value);
+      const paid = parseCellNumber(sumRow.getCell(4).value);
+      const remaining = parseCellNumber(sumRow.getCell(5).value);
+      const purchaseLines = [];
+      const payments = [];
+      for (let r = startRow + 7; r <= endRow; r++) {
+        const row = suppSheet.getRow(r);
+        const lineNo = parseCellNumber(row.getCell(3).value);
+        const dateStr = parseCellDate(row.getCell(6).value);
+        const prod = parseCellString(row.getCell(7).value);
+        const unit = parseCellString(row.getCell(8).value);
+        const qty = parseCellNumber(row.getCell(10).value);
+        const price = parseCellNumber(row.getCell(11).value);
+        const payVal = parseCellNumber(row.getCell(12).value);
+        if (prod && qty > 0) {
+          purchaseLines.push({
+            lineNo: lineNo || purchaseLines.length + 1,
+            date: dateStr,
+            productName: prod,
+            unitName: unit || void 0,
+            qty,
+            unitPrice: price,
+            total: qty * price
+          });
         }
-      });
-    }
-  }
-  if (preview.suppliersFound.length === 0) {
-    const suppSheet = workbook.getWorksheet("\u062D\u0633\u0627\u0628\u0627\u062A \u0627\u0644\u0645\u0648\u0631\u062F\u064A\u0646") || workbook.getWorksheet("\u0627\u0644\u0645\u0648\u0631\u062F\u064A\u0646") || workbook.getWorksheet("Suppliers");
-    if (suppSheet) {
-      suppSheet.eachRow((row, rowNumber) => {
-        const cellC = row.getCell(3).value?.toString().trim();
-        const cellD = row.getCell(4).value?.toString().trim();
-        if (cellC === "\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0631\u062F" && cellD) {
-          const name = cellD;
-          const totRow = suppSheet.getRow(rowNumber + 5);
-          const purchVal = parseFloat(totRow.getCell(3).value?.toString() || "0");
-          const paidVal = parseFloat(totRow.getCell(4).value?.toString() || "0");
-          const purchases = isNaN(purchVal) ? 0 : purchVal;
-          const paid = isNaN(paidVal) ? 0 : paidVal;
-          const balance = purchases - paid;
-          preview.suppliersFound.push({ name, totalPurchases: purchases, totalPaid: paid, balance });
-          preview.totals.supplierPurchases += purchases;
-          preview.totals.supplierPaid += paid;
+        if (payVal > 0) {
+          payments.push({
+            date: dateStr,
+            amount: payVal,
+            notes: `\u0633\u062F\u0627\u062F \u0644\u0644\u0645\u0648\u0631\u062F ${name}`
+          });
         }
+      }
+      preview.suppliersFound.push({
+        name,
+        phone,
+        totalPurchases: purchases,
+        totalPaid: paid,
+        balance: remaining,
+        purchaseLines,
+        payments
       });
+      preview.totals.supplierPurchases += purchases;
+      preview.totals.supplierPaid += paid;
+      preview.totals.supplierRemaining += remaining;
     }
   }
   return preview;
 }
-async function commitImportedData(client, preview, importMode = "opening_balances") {
+async function commitImportedData(client, preview, mode = "opening_balances") {
   let customersCreated = 0;
   let suppliersCreated = 0;
   let productsCreated = 0;
+  let employeesCreated = 0;
   for (const p of preview.productsFound) {
-    let unitId = null;
-    if (p.unit) {
-      const uRes = await client.query("SELECT id FROM app.units WHERE name = $1", [p.unit]);
-      if (uRes.rows.length > 0) {
-        unitId = uRes.rows[0].id;
-      } else {
-        const newU = await client.query("INSERT INTO app.units (name) VALUES ($1) RETURNING id", [p.unit]);
-        unitId = newU.rows[0].id;
-      }
-    }
-    await client.query(
-      `INSERT INTO app.products (code, name, kind, unit_id, default_sale_price, data_origin)
-       VALUES ($1, $2, 'goods', $3, $4, 'excel_import')
-       ON CONFLICT (tenant_id, code) DO UPDATE 
-       SET name = EXCLUDED.name, default_sale_price = EXCLUDED.default_sale_price`,
-      [p.code || `P${productsCreated + 1}`, p.name, unitId, p.price]
-    );
-    productsCreated++;
-  }
-  const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  for (const c of preview.customersFound) {
-    const pRes = await client.query(
-      `INSERT INTO app.parties (name, phone, is_customer, is_supplier, data_origin)
-       VALUES ($1, $2, true, false, 'excel_import')
-       ON CONFLICT (tenant_id, name) DO UPDATE SET phone = COALESCE(EXCLUDED.phone, app.parties.phone)
+    const code = p.code || (await client.query("SELECT app.next_doc_number('product') AS code")).rows[0].code;
+    const res = await client.query(
+      `INSERT INTO app.products (code, name, unit_name, default_sale_price)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (tenant_id, name) DO UPDATE
+       SET unit_name = COALESCE(EXCLUDED.unit_name, app.products.unit_name),
+           default_sale_price = COALESCE(EXCLUDED.default_sale_price, app.products.default_sale_price)
        RETURNING id`,
-      [c.name, c.phone || null]
+      [code, p.name, p.unit || "\u0648\u062D\u062F\u0629", p.price || 0]
     );
-    const partyId = pRes.rows[0].id;
-    customersCreated++;
-    if (c.balance !== 0) {
-      if (c.balance > 0) {
+    if (res.rows.length > 0) productsCreated++;
+  }
+  for (const e of preview.employeesFound) {
+    const code = (await client.query("SELECT app.next_doc_number('employee') AS code")).rows[0].code;
+    const res = await client.query(
+      `INSERT INTO app.employees (code, full_name, job_title, daily_rate, phone)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (tenant_id, full_name) DO NOTHING
+       RETURNING id`,
+      [code, e.name, e.jobTitle || null, e.dailyRate || 0, e.phone || null]
+    );
+    if (res.rows.length > 0) employeesCreated++;
+  }
+  for (const c of preview.customersFound) {
+    const code = (await client.query("SELECT app.next_doc_number('customer') AS code")).rows[0].code;
+    const partyRes = await client.query(
+      `INSERT INTO app.parties (code, name, phone, is_customer, customer_balance)
+       VALUES ($1, $2, $3, true, $4)
+       ON CONFLICT (tenant_id, name) DO UPDATE
+       SET is_customer = true,
+           customer_balance = EXCLUDED.customer_balance
+       RETURNING id`,
+      [code, c.name, c.phone || null, c.balance]
+    );
+    const partyId = partyRes.rows[0]?.id;
+    if (partyId) {
+      customersCreated++;
+      if (c.balance !== 0) {
         await postJournalEntry(client, {
-          entryDate: today,
+          entryDate: c.startDate || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
           sourceDocType: "opening_balance",
           sourceDocId: partyId,
-          narration: `\u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u0645\u0631\u062D\u0644 \u0645\u0646 \u0625\u0643\u0633\u064A\u0644 \u0644\u0644\u0639\u0645\u064A\u0644: ${c.name}`,
+          narration: `\u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u0645\u0631\u062D\u0644 \u0645\u0646 \u0627\u0644\u0625\u0643\u0633\u064A\u0644 \u0644\u0644\u0639\u0645\u064A\u0644 ${c.name}`,
           lines: [
             {
               accountCode: "1100",
+              // Receivable
               partyId,
-              debit: c.balance,
-              credit: 0,
-              description: `\u0631\u0635\u064A\u062F \u0645\u0631\u062D\u0644 ${c.name}`
+              debit: c.balance > 0 ? c.balance : 0,
+              credit: c.balance < 0 ? Math.abs(c.balance) : 0,
+              description: `\u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u0644\u0644\u0639\u0645\u064A\u0644 ${c.name}`
             },
             {
-              accountCode: "3900",
-              // Opening Balance Equity (أرصدة افتتاحية)
-              debit: 0,
-              credit: c.balance,
-              description: `\u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A ${c.name}`
-            }
-          ]
-        });
-      } else {
-        const creditAmt = Math.abs(c.balance);
-        await postJournalEntry(client, {
-          entryDate: today,
-          sourceDocType: "opening_balance",
-          sourceDocId: partyId,
-          narration: `\u0631\u0635\u064A\u062F \u062F\u0627\u0626\u0646 (\u0645\u0642\u062F\u0645) \u0645\u0631\u062D\u0644 \u0645\u0646 \u0625\u0643\u0633\u064A\u0644 \u0644\u0644\u0639\u0645\u064A\u0644: ${c.name}`,
-          lines: [
-            {
-              accountCode: "3900",
-              debit: creditAmt,
-              credit: 0,
-              description: `\u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u062F\u0627\u0626\u0646 ${c.name}`
-            },
-            {
-              accountCode: "1100",
-              partyId,
-              debit: 0,
-              credit: creditAmt,
-              description: `\u0631\u0635\u064A\u062F \u0645\u0642\u062F\u0645 \u0645\u0631\u062D\u0644 ${c.name}`
+              accountCode: "3000",
+              // Equity / Retained Earnings
+              debit: c.balance < 0 ? Math.abs(c.balance) : 0,
+              credit: c.balance > 0 ? c.balance : 0,
+              description: `\u0645\u0642\u0627\u0628\u0644 \u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u0644\u0644\u0639\u0645\u064A\u0644 ${c.name}`
             }
           ]
         });
@@ -143412,43 +143892,52 @@ async function commitImportedData(client, preview, importMode = "opening_balance
     }
   }
   for (const s of preview.suppliersFound) {
-    const pRes = await client.query(
-      `INSERT INTO app.parties (name, is_customer, is_supplier, data_origin)
-       VALUES ($1, false, true, 'excel_import')
-       ON CONFLICT (tenant_id, name) DO UPDATE SET is_supplier = true
+    const code = (await client.query("SELECT app.next_doc_number('supplier') AS code")).rows[0].code;
+    const partyRes = await client.query(
+      `INSERT INTO app.parties (code, name, phone, is_supplier, supplier_balance)
+       VALUES ($1, $2, $3, true, $4)
+       ON CONFLICT (tenant_id, name) DO UPDATE
+       SET is_supplier = true,
+           supplier_balance = EXCLUDED.supplier_balance
        RETURNING id`,
-      [s.name]
+      [code, s.name, s.phone || null, s.balance]
     );
-    const partyId = pRes.rows[0].id;
-    suppliersCreated++;
-    if (s.balance !== 0) {
-      if (s.balance > 0) {
+    const partyId = partyRes.rows[0]?.id;
+    if (partyId) {
+      suppliersCreated++;
+      if (s.balance !== 0) {
         await postJournalEntry(client, {
-          entryDate: today,
+          entryDate: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
           sourceDocType: "opening_balance",
           sourceDocId: partyId,
-          narration: `\u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u0645\u0631\u062D\u0644 \u0645\u0646 \u0625\u0643\u0633\u064A\u0644 \u0644\u0644\u0645\u0648\u0631\u062F: ${s.name}`,
+          narration: `\u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u0645\u0631\u062D\u0644 \u0645\u0646 \u0627\u0644\u0625\u0643\u0633\u064A\u0644 \u0644\u0644\u0645\u0648\u0631\u062F ${s.name}`,
           lines: [
             {
-              accountCode: "3900",
-              debit: s.balance,
-              credit: 0,
-              description: `\u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u0645\u0648\u0631\u062F ${s.name}`
+              accountCode: "3000",
+              // Equity
+              debit: s.balance > 0 ? s.balance : 0,
+              credit: s.balance < 0 ? Math.abs(s.balance) : 0,
+              description: `\u0645\u0642\u0627\u0628\u0644 \u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u0644\u0644\u0645\u0648\u0631\u062F ${s.name}`
             },
             {
               accountCode: "2100",
-              // Payable (الموردون)
+              // Payable
               partyId,
-              debit: 0,
-              credit: s.balance,
-              description: `\u0645\u0633\u062A\u062D\u0642 \u0645\u0631\u062D\u0644 \u0644\u0644\u0645\u0648\u0631\u062F ${s.name}`
+              debit: s.balance < 0 ? Math.abs(s.balance) : 0,
+              credit: s.balance > 0 ? s.balance : 0,
+              description: `\u0631\u0635\u064A\u062F \u0627\u0641\u062A\u062A\u0627\u062D\u064A \u0644\u0644\u0645\u0648\u0631\u062F ${s.name}`
             }
           ]
         });
       }
     }
   }
-  return { customersCreated, suppliersCreated, productsCreated };
+  return {
+    customersCreated,
+    suppliersCreated,
+    productsCreated,
+    employeesCreated
+  };
 }
 
 // src/domain/exporter.ts
@@ -143691,14 +144180,17 @@ async function exportYomiaWorkbook(client, fixOldFormulas = true) {
       eqRow++;
     }
   }
+  const compRes = await client.query(`SELECT name_ar, name_en, tagline, address, phones FROM app.company_profile LIMIT 1;`).catch(() => ({ rows: [] }));
+  const comp = compRes.rows[0] || { name_ar: "Fludo Supplies" };
   const statementSheet = workbook.getWorksheet("\u0643\u0634\u0641 \u062D\u0633\u0627\u0628");
   if (statementSheet) {
-    statementSheet.getCell("B2").value = "R";
-    statementSheet.getCell("C2").value = "\u0634\u0631\u0643\u0629 \u0627\u0644\u0631\u0636\u0627 \u0644\u0644\u062A\u0648\u0631\u064A\u062F\u0627\u062A";
-    statementSheet.getCell("C3").value = "AL REDA SUPPLIES CO.\n\u0645\u0648\u0627\u062F \u0627\u0644\u0628\u0646\u0627\u0621 \u0648 \u0627\u0644\u062A\u0648\u0631\u064A\u062F\u0627\u062A \u0627\u0644\u0639\u0627\u0645\u0647";
-    statementSheet.getCell("C4").value = "\u0634\u0627\u0631\u0639 \u0639\u0634\u0645\u0627\u0648\u064A \u0643\u0631\u062F\u0627\u0633\u0647";
-    statementSheet.getCell("E3").value = "\u0645\u062D\u0645\u062F : 01030343576\n\u0627\u0628\u0631\u0627\u0647\u064A\u0645 : 01008681338";
-    statementSheet.getCell("G3").value = "\u0645\u0643\u062A\u0628 :\n01063794169";
+    statementSheet.getCell("B2").value = (comp.name_ar || "F")[0];
+    statementSheet.getCell("C2").value = comp.name_ar || "Fludo Supplies";
+    statementSheet.getCell("C3").value = `${comp.name_en || "Fludo Supplies"}
+${comp.tagline || "\u0646\u0638\u0627\u0645 \u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u062A\u0648\u0631\u064A\u062F\u0627\u062A"}`;
+    statementSheet.getCell("C4").value = comp.address || "";
+    statementSheet.getCell("E3").value = comp.phones || "";
+    statementSheet.getCell("G3").value = "";
     const primaryCustRes = await client.query(`
       SELECT p.id, p.name, COALESCE(SUM(l.debit - l.credit), 0) AS balance
       FROM app.parties p
@@ -143727,7 +144219,7 @@ async function exportYomiaWorkbook(client, fixOldFormulas = true) {
   }
   const homeSheet = workbook.getWorksheet("\u0627\u0644\u0631\u0626\u064A\u0633\u064A\u0647");
   if (homeSheet) {
-    homeSheet.getCell("B2").value = "\u0634\u0631\u0643\u0629 \u0627\u0644\u0631\u0636\u0627 \u0644\u0644\u062A\u0648\u0631\u064A\u062F\u0627\u062A \u2014 \u0646\u0638\u0627\u0645 \u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u062A\u0643\u0627\u0645\u0644";
+    homeSheet.getCell("B2").value = `${comp.name_ar || "Fludo Supplies"} \u2014 \u0646\u0638\u0627\u0645 \u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u062A\u0643\u0627\u0645\u0644`;
     homeSheet.getCell("B4").value = "\u0625\u062C\u0645\u0627\u0644\u064A \u0627\u0644\u0645\u0628\u064A\u0639\u0627\u062A \u0627\u0644\u0645\u0639\u062A\u0645\u062F\u0629:";
     homeSheet.getCell("C4").value = totalSales;
     homeSheet.getCell("C4").numFmt = '#,##0.00 "\u062C.\u0645"';
@@ -143832,16 +144324,26 @@ BEGIN;
   return sqlDump;
 }
 async function exportFullSqlBackup() {
-  const pgDumpExe = "C:\\Program Files\\PostgreSQL\\18\\bin\\pg_dump.exe";
-  if (!import_node_fs.default.existsSync(pgDumpExe)) {
-    throw new Error("pg_dump.exe \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0645\u0633\u0627\u0631 PostgreSQL 18");
+  const pgDumpCandidates = [
+    import_node_path.default.resolve(__dirname, "../../../../apps/desktop/pgsql/bin/pg_dump.exe"),
+    import_node_path.default.resolve(process.cwd(), "apps/desktop/pgsql/bin/pg_dump.exe"),
+    import_node_path.default.resolve(process.cwd(), "pgsql/bin/pg_dump.exe"),
+    "C:\\Program Files\\PostgreSQL\\18\\bin\\pg_dump.exe",
+    "C:\\Program Files\\PostgreSQL\\17\\bin\\pg_dump.exe",
+    "C:\\Program Files\\PostgreSQL\\16\\bin\\pg_dump.exe"
+  ];
+  const pgDumpExe = pgDumpCandidates.find((p) => import_node_fs.default.existsSync(p));
+  if (!pgDumpExe) {
+    throw new Error("pg_dump.exe \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0645\u062D\u0631\u0643 PostgreSQL \u0627\u0644\u0645\u062D\u0645\u0648\u0644 \u0623\u0648 \u0627\u0644\u0645\u062B\u0628\u062A");
   }
+  const port = process.env.PGPORT || "5434";
+  const password = process.env.PGPASSWORD || "erp_password_local_123";
   return new Promise((resolve, reject) => {
     const args = [
       "-h",
       "127.0.0.1",
       "-p",
-      "5433",
+      String(port),
       "-U",
       "erp_owner",
       "-d",
@@ -143852,7 +144354,7 @@ async function exportFullSqlBackup() {
       "--no-privileges",
       "--encoding=UTF8"
     ];
-    (0, import_node_child_process.execFile)(pgDumpExe, args, { maxBuffer: 100 * 1024 * 1024, env: { ...process.env, PGPASSWORD: "" } }, (err, stdout, stderr) => {
+    (0, import_node_child_process.execFile)(pgDumpExe, args, { maxBuffer: 100 * 1024 * 1024, env: { ...process.env, PGPASSWORD: password } }, (err, stdout, stderr) => {
       if (err) {
         return reject(new Error(`\u0641\u0634\u0644 \u062A\u0634\u063A\u064A\u0644 pg_dump: ${stderr || err.message}`));
       }
@@ -143860,7 +144362,7 @@ async function exportFullSqlBackup() {
       const header = `-- ========================================================
 -- Fludo Supplies ERP Full PostgreSQL Backup
 -- Generated At: ${(/* @__PURE__ */ new Date()).toISOString()}
--- Engine: PostgreSQL 18.x
+-- Engine: PostgreSQL Portable Runtime
 -- Database: fludo_erp
 -- SHA-256 Checksum: ${hash}
 -- ========================================================
@@ -143869,6 +144371,95 @@ async function exportFullSqlBackup() {
       resolve(header + stdout);
     });
   });
+}
+async function exportDatabaseToDataWorkbook(client) {
+  const workbook = new import_exceljs2.default.Workbook();
+  workbook.creator = "Fludo Supplies ERP";
+  workbook.created = /* @__PURE__ */ new Date();
+  const tables = [
+    "company_profile",
+    "branches",
+    "units",
+    "products",
+    "parties",
+    "cash_accounts",
+    "sales_invoices",
+    "sales_invoice_lines",
+    "purchase_invoices",
+    "purchase_invoice_lines",
+    "payments",
+    "payment_allocations",
+    "expenses",
+    "employees",
+    "attendance",
+    "employee_transactions",
+    "equipment",
+    "shipments",
+    "cash_transfers",
+    "journal_entries",
+    "journal_lines"
+  ];
+  const metaRows = [];
+  for (const tbl of tables) {
+    try {
+      const rowsRes = await client.query(
+        `SELECT * FROM app.${tbl} WHERE is_deleted = false OR is_deleted IS NULL ORDER BY created_at ASC`
+      );
+      const sheet = workbook.addWorksheet(tbl, { views: [{ rightToLeft: true }] });
+      const rows = rowsRes.rows;
+      if (rows.length > 0) {
+        const columns = Object.keys(rows[0]).map((col) => ({
+          header: col,
+          key: col,
+          width: col.includes("id") || col.includes("name") ? 28 : 16
+        }));
+        sheet.columns = columns;
+        sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+        sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E293B" } };
+        for (const row of rows) {
+          if (tbl === "users") {
+            delete row.password_hash;
+            delete row.manager_pin_hash;
+          }
+          const sanitizedRow = {};
+          for (const k of Object.keys(row)) {
+            let val = row[k];
+            if (typeof val === "string" && /^[=+\-@]/.test(val)) {
+              val = `'${val}`;
+            }
+            if (val instanceof Date) {
+              val = val.toISOString();
+            }
+            sanitizedRow[k] = val;
+          }
+          sheet.addRow(sanitizedRow);
+        }
+      }
+      const tableDataStr = JSON.stringify(rows);
+      const tableHash = import_node_crypto2.default.createHash("sha256").update(tableDataStr).digest("hex");
+      metaRows.push({
+        table_name: tbl,
+        row_count: rows.length,
+        table_hash: tableHash
+      });
+    } catch {
+    }
+  }
+  const metaSheet = workbook.addWorksheet("_meta", { views: [{ rightToLeft: true }] });
+  metaSheet.columns = [
+    { header: "\u0627\u0633\u0645 \u0627\u0644\u062C\u062F\u0648\u0644 (Table Name)", key: "table_name", width: 28 },
+    { header: "\u0639\u062F\u062F \u0627\u0644\u0633\u062C\u0644\u0627\u062A (Row Count)", key: "row_count", width: 20 },
+    { header: "\u0628\u0635\u0645\u0629 \u0627\u0644\u062A\u0634\u0641\u064A\u0631 (SHA-256 Hash)", key: "table_hash", width: 45 }
+  ];
+  metaSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  metaSheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  metaSheet.addRow({ table_name: "__SYSTEM__", row_count: 0, table_hash: "Fludo Supplies ERP" });
+  metaSheet.addRow({ table_name: "__SCHEMA_VERSION__", row_count: 3, table_hash: "0003_comprehensive_schema_update" });
+  metaSheet.addRow({ table_name: "__EXPORTED_AT__", row_count: 0, table_hash: (/* @__PURE__ */ new Date()).toISOString() });
+  for (const mr of metaRows) {
+    metaSheet.addRow(mr);
+  }
+  return await workbook.xlsx.writeBuffer();
 }
 async function generateImportTemplateExcel() {
   const workbook = new import_exceljs2.default.Workbook();
@@ -143933,6 +144524,15 @@ var dataPortRoutes = async (fastify2) => {
   fastify2.get("/template/excel", async (req, reply) => {
     const buffer = await generateImportTemplateExcel();
     reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", 'attachment; filename="fludo_import_template.xlsx"').send(buffer);
+  });
+  fastify2.get("/export/excel/data-workbook", async (req, reply) => {
+    const client = await pool.connect();
+    try {
+      const buffer = await exportDatabaseToDataWorkbook(client);
+      reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", 'attachment; filename="fludo_erp_data_workbook.xlsx"').send(buffer);
+    } finally {
+      client.release();
+    }
   });
   fastify2.get("/export/yomia", async (req, reply) => {
     const { fix_formulas } = req.query;
@@ -144032,7 +144632,7 @@ var companyRoutes = async (fastify2) => {
     const isSetupCompleted = setupCheck.rows.length > 0 && setupCheck.rows[0].value === true;
     if (res.rows.length === 0) {
       return {
-        name_ar: "\u0634\u0631\u0643\u0629 \u0627\u0644\u0631\u0636\u0627 \u0644\u0644\u062A\u0648\u0631\u064A\u062F\u0627\u062A",
+        name_ar: "Fludo Supplies",
         name_en: "AL REDA SUPPLIES CO.",
         tagline: "\u0645\u0648\u0627\u062F \u0627\u0644\u0628\u0646\u0627\u0621 \u0648\u0627\u0644\u062A\u0648\u0631\u064A\u062F\u0627\u062A \u0627\u0644\u0639\u0627\u0645\u0629",
         address: "\u0643\u0631\u062F\u0627\u0633\u0629 \u2014 \u0627\u0644\u062C\u064A\u0632\u0629",
@@ -144392,77 +144992,92 @@ var searchRoutes = async (fastify2) => {
     const results = [];
     if (!requestedTypes || requestedTypes.includes("products")) {
       const prodRes = await pool.query(
-        `SELECT id, code, name, default_sale_price,
+        `SELECT id, code, name, default_sale_price, unit_name,
                 similarity(search_text, app.normalize_ar($1)) AS sml
          FROM app.products
          WHERE is_deleted = false 
            AND (
-             code ILIKE $2 OR 
-             name ILIKE $2 OR 
+             code = $1 OR
+             code ILIKE ($1 || '%') OR
+             name ILIKE ('%' || $1 || '%') OR 
              search_text ILIKE ('%' || app.normalize_ar($1) || '%') OR
              search_text % app.normalize_ar($1)
            )
-         ORDER BY (code ILIKE $2) DESC, (search_text ILIKE ('%' || app.normalize_ar($1) || '%')) DESC, sml DESC, code ASC
-         LIMIT $3`,
-        [searchTerm, `%${searchTerm}%`, maxLimit]
+         ORDER BY (code = $1) DESC, (code ILIKE ($1 || '%')) DESC, (search_text ILIKE ('%' || app.normalize_ar($1) || '%')) DESC, sml DESC, code ASC
+         LIMIT $2`,
+        [searchTerm, maxLimit]
       );
       for (const row of prodRes.rows) {
         results.push({
           type: "product",
           id: row.id,
           title: row.name,
-          subtitle: `\u0643\u0648\u062F: ${row.code} \u2014 \u0633\u0639\u0631 \u0627\u0644\u064A\u0648\u0645: ${parseFloat(row.default_sale_price || "0").toLocaleString()} \u062C.\u0645`,
+          subtitle: `\u0643\u0648\u062F: ${row.code} \u2014 \u0627\u0644\u0648\u062D\u062F\u0629: ${row.unit_name || "\u2014"} \u2014 \u0633\u0639\u0631 \u0627\u0644\u0628\u064A\u0639: ${parseFloat(row.default_sale_price || "0").toLocaleString()} \u062C.\u0645`,
           code: row.code,
-          route: "products",
+          route: "inventory",
           meta: { price: parseFloat(row.default_sale_price || "0") }
         });
       }
     }
     if (!requestedTypes || requestedTypes.includes("customers") || requestedTypes.includes("suppliers") || requestedTypes.includes("parties")) {
       const partyRes = await pool.query(
-        `SELECT id, name, phone, is_customer, is_supplier,
+        `SELECT id, code, name, phone, is_customer, is_supplier,
                 similarity(search_text, app.normalize_ar($1)) AS sml
          FROM app.parties
          WHERE is_deleted = false
            AND (
-             name ILIKE $2 OR 
-             phone ILIKE $2 OR 
+             COALESCE(code, '') = $1 OR
+             COALESCE(code, '') ILIKE ($1 || '%') OR
+             name ILIKE ('%' || $1 || '%') OR 
+             COALESCE(phone, '') ILIKE ('%' || $1 || '%') OR 
              search_text ILIKE ('%' || app.normalize_ar($1) || '%') OR
              search_text % app.normalize_ar($1)
            )
-         ORDER BY (search_text ILIKE ('%' || app.normalize_ar($1) || '%')) DESC, (name ILIKE $2) DESC, sml DESC, name ASC
-         LIMIT $3`,
-        [searchTerm, `%${searchTerm}%`, maxLimit]
+         ORDER BY (COALESCE(code, '') = $1) DESC, (COALESCE(code, '') ILIKE ($1 || '%')) DESC, (search_text ILIKE ('%' || app.normalize_ar($1) || '%')) DESC, sml DESC, name ASC
+         LIMIT $2`,
+        [searchTerm, maxLimit]
       );
       for (const row of partyRes.rows) {
         const kind = row.is_customer && row.is_supplier ? "\u0639\u0645\u064A\u0644 \u0648\u0645\u0648\u0631\u062F" : row.is_customer ? "\u0639\u0645\u064A\u0644" : "\u0645\u0648\u0631\u062F";
         results.push({
           type: row.is_customer ? "customer" : "supplier",
           id: row.id,
-          title: row.name,
+          title: `${row.code ? `[${row.code}] ` : ""}${row.name}`,
           subtitle: `${kind} \u2014 ${row.phone || "\u0628\u062F\u0648\u0646 \u0647\u0627\u062A\u0641"}`,
+          code: row.code,
           route: row.is_customer ? "customers" : "suppliers"
         });
       }
     }
     if (!requestedTypes || requestedTypes.includes("invoices")) {
       const invRes = await pool.query(
-        `SELECT i.id, i.invoice_no, p.name AS party_name, i.net_total,
-                TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date
-         FROM app.sales_invoices i
-         JOIN app.parties p ON p.id = i.party_id
-         WHERE i.is_deleted = false
-           AND (i.invoice_no ILIKE $1 OR p.name ILIKE $1)
-         ORDER BY (i.invoice_no ILIKE $1) DESC, i.invoice_date DESC
+        `SELECT
+          si.id, si.invoice_no, 'sale' AS doc_kind, p.name AS party_name, si.net_total,
+          TO_CHAR(si.invoice_date, 'YYYY-MM-DD') AS invoice_date
+         FROM app.sales_invoices si
+         JOIN app.parties p ON p.id = si.party_id
+         WHERE si.is_deleted = false AND (si.invoice_no ILIKE ('%' || $1 || '%') OR p.name ILIKE ('%' || $1 || '%'))
+
+         UNION ALL
+
+         SELECT
+          pi.id, pi.invoice_no, 'purchase' AS doc_kind, p.name AS party_name, pi.net_total,
+          TO_CHAR(pi.invoice_date, 'YYYY-MM-DD') AS invoice_date
+         FROM app.purchase_invoices pi
+         JOIN app.parties p ON p.id = pi.party_id
+         WHERE pi.is_deleted = false AND (pi.invoice_no ILIKE ('%' || $1 || '%') OR p.name ILIKE ('%' || $1 || '%'))
+
+         ORDER BY (invoice_no = $1) DESC, (invoice_no ILIKE ($1 || '%')) DESC, invoice_date DESC
          LIMIT $2`,
-        [`%${searchTerm}%`, maxLimit]
+        [searchTerm, maxLimit]
       );
       for (const row of invRes.rows) {
+        const kindLabel = row.doc_kind === "sale" ? "\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u064A\u0639" : "\u0625\u0630\u0646 \u062A\u0648\u0631\u064A\u062F \u0645\u0648\u0631\u062F";
         results.push({
           type: "invoice",
           id: row.id,
-          title: `\u0641\u0627\u062A\u0648\u0631\u0629 \u0645\u0628\u064A\u0639\u0627\u062A ${row.invoice_no}`,
-          subtitle: `\u0627\u0644\u0639\u0645\u064A\u0644: ${row.party_name} \u2014 \u0627\u0644\u062A\u0627\u0631\u064A\u062E: ${row.invoice_date} \u2014 ${parseFloat(row.net_total || "0").toLocaleString()} \u062C.\u0645`,
+          title: `${kindLabel} ${row.invoice_no}`,
+          subtitle: `\u0627\u0644\u0637\u0631\u0641: ${row.party_name} \u2014 \u0627\u0644\u062A\u0627\u0631\u064A\u062E: ${row.invoice_date} \u2014 ${parseFloat(row.net_total || "0").toLocaleString()} \u062C.\u0645`,
           code: row.invoice_no,
           route: "invoices"
         });
@@ -144475,52 +145090,45 @@ var searchRoutes = async (fastify2) => {
          FROM app.employees
          WHERE is_deleted = false
            AND (
-             COALESCE(code, '') ILIKE $2 OR
-             full_name ILIKE $2 OR
-             COALESCE(phone, '') ILIKE $2 OR
+             COALESCE(code, '') = $1 OR
+             COALESCE(code, '') ILIKE ($1 || '%') OR
+             full_name ILIKE ('%' || $1 || '%') OR
+             COALESCE(phone, '') ILIKE ('%' || $1 || '%') OR
              search_text ILIKE ('%' || app.normalize_ar($1) || '%') OR
              search_text % app.normalize_ar($1)
            )
-         ORDER BY (search_text ILIKE ('%' || app.normalize_ar($1) || '%')) DESC, (full_name ILIKE $2) DESC, sml DESC
-         LIMIT $3`,
-        [searchTerm, `%${searchTerm}%`, maxLimit]
+         ORDER BY (COALESCE(code, '') = $1) DESC, (COALESCE(code, '') ILIKE ($1 || '%')) DESC, (search_text ILIKE ('%' || app.normalize_ar($1) || '%')) DESC, sml DESC
+         LIMIT $2`,
+        [searchTerm, maxLimit]
       );
       for (const row of empRes.rows) {
         results.push({
           type: "employee",
           id: row.id,
-          title: row.full_name,
-          subtitle: `\u0627\u0644\u0648\u0638\u064A\u0641\u0629: ${row.job_title || "\u0639\u0627\u0645\u0644"} \u2014 \u0627\u0644\u064A\u0648\u0645\u064A\u0629: ${parseFloat(row.daily_rate || "0")} \u062C.\u0645`,
+          title: `${row.code ? `[${row.code}] ` : ""}${row.full_name}`,
+          subtitle: `\u0627\u0644\u0648\u0638\u064A\u0641\u0629: ${row.job_title || "\u0645\u0648\u0638\u0641"} \u2014 \u0627\u0644\u064A\u0648\u0645\u064A\u0629: ${parseFloat(row.daily_rate || "0")} \u062C.\u0645`,
           code: row.code,
           route: "payroll"
         });
       }
     }
-    if (!requestedTypes || requestedTypes.includes("equipment")) {
-      const eqRes = await pool.query(
-        `SELECT id, code, name, plate_no, vehicle_description,
-                similarity(search_text, app.normalize_ar($1)) AS sml
-         FROM app.equipment
-         WHERE is_deleted = false
-           AND (
-             COALESCE(code, '') ILIKE $2 OR
-             name ILIKE $2 OR
-             COALESCE(plate_no, '') ILIKE $2 OR
-             search_text ILIKE ('%' || app.normalize_ar($1) || '%') OR
-             search_text % app.normalize_ar($1)
-           )
-         ORDER BY (search_text ILIKE ('%' || app.normalize_ar($1) || '%')) DESC, (name ILIKE $2) DESC, sml DESC
-         LIMIT $3`,
-        [searchTerm, `%${searchTerm}%`, maxLimit]
+    if (!requestedTypes || requestedTypes.includes("treasury") || requestedTypes.includes("cash_accounts")) {
+      const cashRes = await pool.query(
+        `SELECT id, name, kind
+         FROM app.cash_accounts
+         WHERE is_deleted = false AND is_active = true
+           AND (name ILIKE ('%' || $1 || '%') OR kind ILIKE ('%' || $1 || '%'))
+         LIMIT $2`,
+        [searchTerm, maxLimit]
       );
-      for (const row of eqRes.rows) {
+      for (const row of cashRes.rows) {
+        const kindLabel = row.kind === "cash" ? "\u062E\u0632\u064A\u0646\u0629 \u0643\u0627\u0634" : row.kind === "wallet" ? "\u0645\u062D\u0641\u0638\u0629 \u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A\u0629" : row.kind === "bank" ? "\u062D\u0633\u0627\u0628 \u0628\u0646\u0643\u064A" : "\u062D\u0633\u0627\u0628 \u0622\u062E\u0631";
         results.push({
-          type: "equipment",
+          type: "cash_account",
           id: row.id,
-          title: `${row.code ? `[${row.code}] ` : ""}${row.name}`,
-          subtitle: `\u0631\u0642\u0645 \u0627\u0644\u0644\u0648\u062D\u0629: ${row.plate_no || "\u063A\u064A\u0631 \u0645\u0633\u062C\u0644"} \u2014 ${row.vehicle_description || ""}`,
-          code: row.code,
-          route: "equipment"
+          title: row.name,
+          subtitle: `\u0646\u0648\u0639 \u0627\u0644\u062D\u0633\u0627\u0628: ${kindLabel}`,
+          route: "treasury"
         });
       }
     }
@@ -144809,6 +145417,27 @@ async function autoEnsureSchema() {
         const sql = fs2.readFileSync(sql2Path, "utf8");
         await pool.query(sql);
         console.log("[API] 0002 migration applied successfully!");
+      }
+    }
+    const m3Check = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_views WHERE schemaname = 'app' AND viewname = 'v_dashboard_metrics'
+      ) AS exists;
+    `).catch(() => ({ rows: [{ exists: false }] }));
+    if (!m3Check.rows[0]?.exists) {
+      console.log("[API] Applying 0003_comprehensive_schema_update.sql migration...");
+      const migration3Paths = [
+        path2.join(__dirname, "0003_comprehensive_schema_update.sql"),
+        path2.join(__dirname, "..", "0003_comprehensive_schema_update.sql"),
+        path2.resolve(process.cwd(), "db/migrations/0003_comprehensive_schema_update.sql"),
+        path2.resolve(process.cwd(), "../../db/migrations/0003_comprehensive_schema_update.sql"),
+        path2.join(process.cwd(), "0003_comprehensive_schema_update.sql")
+      ];
+      const sql3Path = migration3Paths.find((p) => fs2.existsSync(p));
+      if (sql3Path) {
+        const sql = fs2.readFileSync(sql3Path, "utf8");
+        await pool.query(sql);
+        console.log("[API] 0003 migration applied successfully!");
       }
     }
   } catch (err) {

@@ -424,6 +424,31 @@ async function startFullSystem(): Promise<boolean> {
           logDesktop('[STARTUP] 0002_fix_constraints_and_search.sql applied via psql.');
         }
       }
+
+      // Check Migration 0003
+      const checkM3 = execFileSync(
+        pgBinaries.psqlExe,
+        ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-t', '-c', "SELECT to_regclass('app.v_dashboard_metrics');"],
+        { encoding: 'utf8', windowsHide: true, stdio: 'pipe' }
+      ).trim();
+
+      if (!checkM3 || checkM3 === '') {
+        logDesktop('[STARTUP] Migration 0003 needed. Applying 0003_comprehensive_schema_update.sql...');
+        const mig3Candidates = [
+          path.join(appPath, '0003_comprehensive_schema_update.sql'),
+          path.join(__dirname, '../0003_comprehensive_schema_update.sql'),
+          path.join(__dirname, '0003_comprehensive_schema_update.sql'),
+          path.resolve(__dirname, '../../db/migrations/0003_comprehensive_schema_update.sql'),
+        ];
+        const mig3 = mig3Candidates.find((m) => fs.existsSync(m));
+        if (mig3) {
+          execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-f', mig3], {
+            stdio: 'pipe',
+            windowsHide: true,
+          });
+          logDesktop('[STARTUP] 0003_comprehensive_schema_update.sql applied via psql.');
+        }
+      }
     } catch (migErr: any) {
       logDesktop(`[STARTUP] Note on migration check: ${migErr?.message}`);
     }
@@ -528,7 +553,7 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
-    title: 'شركة الرضا للتوريدات — Fludo ERP v1.4.0',
+    title: 'Fludo Supplies ERP',
     backgroundColor: '#0f172a',
     autoHideMenuBar: true,
     show: false,

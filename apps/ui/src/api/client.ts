@@ -111,6 +111,10 @@ export const api = {
     return apiFetch<any[]>(`/parties?${q.toString()}`);
   },
   createParty: (party: any) => apiFetch<any>('/parties', { method: 'POST', body: JSON.stringify(party) }),
+  updateParty: (id: string, party: any) => apiFetch<any>(`/parties/${id}`, { method: 'PUT', body: JSON.stringify(party) }),
+  getPartySummary: (id: string) => apiFetch<any>(`/parties/${id}/summary`),
+  getPartyActivity: (id: string) => apiFetch<any[]>(`/parties/${id}/activity`),
+  getPartyShipments: (id: string) => apiFetch<any[]>(`/parties/${id}/shipments`),
   getPartyStatement: (id: string, start?: string, end?: string) => {
     const q = new URLSearchParams();
     if (start) q.set('start_date', start);
@@ -118,6 +122,8 @@ export const api = {
     return apiFetch<any>(`/parties/${id}/statement?${q.toString()}`);
   },
   performNetting: (data: any) => apiFetch<any>('/parties/netting', { method: 'POST', body: JSON.stringify(data) }),
+  verifyPin: (data: { targetTable: string; targetId: string; reason: string; managerPin: string }) =>
+    apiFetch<any>('/approvals/verify-pin', { method: 'POST', body: JSON.stringify(data) }),
 
   // Products
   getProducts: () => apiFetch<any[]>('/products'),
@@ -133,6 +139,10 @@ export const api = {
   createOrder: (order: any) => apiFetch<any>('/orders', { method: 'POST', body: JSON.stringify(order) }),
 
   // Invoices
+  getInvoicesRegistry: (params?: any) => {
+    const q = new URLSearchParams(params || {});
+    return apiFetch<any[]>(`/invoices/registry?${q.toString()}`);
+  },
   getSalesInvoices: (params?: any) => {
     const q = new URLSearchParams(params || {});
     return apiFetch<any[]>(`/invoices/sales?${q.toString()}`);
@@ -156,16 +166,30 @@ export const api = {
   // Inventory
   getInventory: () => apiFetch<any[]>('/inventory'),
   getStockMovements: (productId?: string) => apiFetch<any[]>(`/inventory/movements${productId ? `?product_id=${productId}` : ''}`),
+  getReservedBreakdown: (productId: string) => apiFetch<any[]>(`/inventory/${productId}/reserved-breakdown`),
+  getIncomingBreakdown: (productId: string) => apiFetch<any[]>(`/inventory/${productId}/incoming-breakdown`),
   recordAdjustment: (adj: any) => apiFetch<any>('/inventory/adjustment', { method: 'POST', body: JSON.stringify(adj) }),
+  updateProduct: (id: string, data: any) => apiFetch<any>(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Treasury
   getCashAccounts: () => apiFetch<any[]>('/treasury/accounts'),
+  createCashAccount: (data: any) => apiFetch<any>('/treasury/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  toggleCashAccountActive: (id: string) => apiFetch<any>(`/treasury/accounts/${id}/toggle-active`, { method: 'PUT' }),
+  getCashAccountStatement: (id: string) => apiFetch<any>(`/treasury/accounts/${id}/statement`),
   transferCash: (data: any) => apiFetch<any>('/treasury/transfer', { method: 'POST', body: JSON.stringify(data) }),
   recordCashCount: (data: any) => apiFetch<any>('/treasury/count', { method: 'POST', body: JSON.stringify(data) }),
 
   // Payroll
   getEmployees: () => apiFetch<any[]>('/payroll/employees'),
   createEmployee: (emp: any) => apiFetch<any>('/payroll/employees', { method: 'POST', body: JSON.stringify(emp) }),
+  getEmployeeMonthSummary: (id: string, year: number, month: number) =>
+    apiFetch<any>(`/payroll/employees/${id}/month-summary?year=${year}&month=${month}`),
+  recordEmployeeAttendanceDay: (id: string, data: any) =>
+    apiFetch<any>(`/payroll/employees/${id}/attendance-day`, { method: 'POST', body: JSON.stringify(data) }),
+  addEmployeeTransaction: (id: string, data: any) =>
+    apiFetch<any>(`/payroll/employees/${id}/transaction`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteEmployeeTransaction: (txId: string, approvalId: string) =>
+    apiFetch<any>(`/payroll/employees/transactions/${txId}`, { method: 'DELETE', body: JSON.stringify({ approvalId }) }),
   recordAttendance: (records: any[]) => apiFetch<any>('/payroll/attendance', { method: 'POST', body: JSON.stringify({ records }) }),
   getEmployeeStatement: (id: string, start: string, end: string) =>
     apiFetch<any>(`/payroll/statement/${id}?start_date=${start}&end_date=${end}`),

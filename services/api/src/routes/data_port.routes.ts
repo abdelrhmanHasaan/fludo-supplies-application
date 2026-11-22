@@ -7,6 +7,7 @@ import {
   exportCustomerStatementToExcel,
   exportDatabaseToSql,
   exportFullSqlBackup,
+  exportDatabaseToDataWorkbook,
   exportYomiaWorkbook,
   generateImportTemplateExcel,
 } from '../domain/exporter.js';
@@ -45,6 +46,20 @@ export const dataPortRoutes: FastifyPluginAsync = async (fastify) => {
       .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
       .header('Content-Disposition', 'attachment; filename="fludo_import_template.xlsx"')
       .send(buffer);
+  });
+
+  // Export Full Database Excel Data Workbook (One sheet per table + _meta)
+  fastify.get('/export/excel/data-workbook', async (req, reply) => {
+    const client = await pool.connect();
+    try {
+      const buffer = await exportDatabaseToDataWorkbook(client);
+      reply
+        .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        .header('Content-Disposition', 'attachment; filename="fludo_erp_data_workbook.xlsx"')
+        .send(buffer);
+    } finally {
+      client.release();
+    }
   });
 
   // 4. Export Yomia Full 10-Sheet Workbook (Template-Fill Matching يوميه.xlsx)

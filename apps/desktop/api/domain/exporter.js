@@ -9,6 +9,7 @@ exports.exportCustomerStatementToExcel = exportCustomerStatementToExcel;
 exports.exportYomiaWorkbook = exportYomiaWorkbook;
 exports.exportDatabaseToSql = exportDatabaseToSql;
 exports.exportFullSqlBackup = exportFullSqlBackup;
+exports.exportDatabaseToDataWorkbook = exportDatabaseToDataWorkbook;
 exports.generateImportTemplateExcel = generateImportTemplateExcel;
 const exceljs_1 = __importDefault(require("exceljs"));
 const node_fs_1 = __importDefault(require("node:fs"));
@@ -253,16 +254,18 @@ async function exportYomiaWorkbook(client, fixOldFormulas = true) {
             eqRow++;
         }
     }
-    // 3. Update Sheet 5: "كشف حساب" (Customer Statement Matching Image 5)
+    // 3. Update Sheet 5: "كشف حساب"
+    const compRes = await client.query(`SELECT name_ar, name_en, tagline, address, phones FROM app.company_profile LIMIT 1;`).catch(() => ({ rows: [] }));
+    const comp = compRes.rows[0] || { name_ar: 'Fludo Supplies' };
     const statementSheet = workbook.getWorksheet('كشف حساب');
     if (statementSheet) {
         // Top banner
-        statementSheet.getCell('B2').value = 'R';
-        statementSheet.getCell('C2').value = 'شركة الرضا للتوريدات';
-        statementSheet.getCell('C3').value = 'AL REDA SUPPLIES CO.\nمواد البناء و التوريدات العامه';
-        statementSheet.getCell('C4').value = 'شارع عشماوي كرداسه';
-        statementSheet.getCell('E3').value = 'محمد : 01030343576\nابراهيم : 01008681338';
-        statementSheet.getCell('G3').value = 'مكتب :\n01063794169';
+        statementSheet.getCell('B2').value = (comp.name_ar || 'F')[0];
+        statementSheet.getCell('C2').value = comp.name_ar || 'Fludo Supplies';
+        statementSheet.getCell('C3').value = `${comp.name_en || 'Fludo Supplies'}\n${comp.tagline || 'نظام إدارة التوريدات'}`;
+        statementSheet.getCell('C4').value = comp.address || '';
+        statementSheet.getCell('E3').value = comp.phones || '';
+        statementSheet.getCell('G3').value = '';
         // Query primary customer balance or use 85350 sample
         const primaryCustRes = await client.query(`
       SELECT p.id, p.name, COALESCE(SUM(l.debit - l.credit), 0) AS balance
@@ -294,7 +297,7 @@ async function exportYomiaWorkbook(client, fixOldFormulas = true) {
     // 4. Update Sheet 1: "الرئيسيه" (Dashboard summaries)
     const homeSheet = workbook.getWorksheet('الرئيسيه');
     if (homeSheet) {
-        homeSheet.getCell('B2').value = 'شركة الرضا للتوريدات — نظام الإدارة المتكامل';
+        homeSheet.getCell('B2').value = `${comp.name_ar || 'Fludo Supplies'} — نظام الإدارة المتكامل`;
         homeSheet.getCell('B4').value = 'إجمالي المبيعات المعتمدة:';
         homeSheet.getCell('C4').value = totalSales;
         homeSheet.getCell('C4').numFmt = '#,##0.00 "ج.م"';
@@ -403,14 +406,24 @@ async function exportDatabaseToSql(client) {
     return sqlDump;
 }
 async function exportFullSqlBackup() {
-    const pgDumpExe = 'C:\\Program Files\\PostgreSQL\\18\\bin\\pg_dump.exe';
-    if (!node_fs_1.default.existsSync(pgDumpExe)) {
-        throw new Error('pg_dump.exe غير موجود في مسار PostgreSQL 18');
+    const pgDumpCandidates = [
+        node_path_1.default.resolve(__dirname, '../../../../apps/desktop/pgsql/bin/pg_dump.exe'),
+        node_path_1.default.resolve(process.cwd(), 'apps/desktop/pgsql/bin/pg_dump.exe'),
+        node_path_1.default.resolve(process.cwd(), 'pgsql/bin/pg_dump.exe'),
+        'C:\\Program Files\\PostgreSQL\\18\\bin\\pg_dump.exe',
+        'C:\\Program Files\\PostgreSQL\\17\\bin\\pg_dump.exe',
+        'C:\\Program Files\\PostgreSQL\\16\\bin\\pg_dump.exe',
+    ];
+    const pgDumpExe = pgDumpCandidates.find((p) => node_fs_1.default.existsSync(p));
+    if (!pgDumpExe) {
+        throw new Error('pg_dump.exe غير موجود في محرك PostgreSQL المحمول أو المثبت');
     }
+    const port = process.env.PGPORT || '5434';
+    const password = process.env.PGPASSWORD || 'erp_password_local_123';
     return new Promise((resolve, reject) => {
         const args = [
             '-h', '127.0.0.1',
-            '-p', '5433',
+            '-p', String(port),
             '-U', 'erp_owner',
             '-d', 'fludo_erp',
             '--format=p', // plain text SQL
@@ -418,7 +431,7 @@ async function exportFullSqlBackup() {
             '--no-privileges',
             '--encoding=UTF8',
         ];
-        (0, node_child_process_1.execFile)(pgDumpExe, args, { maxBuffer: 100 * 1024 * 1024, env: { ...process.env, PGPASSWORD: '' } }, (err, stdout, stderr) => {
+        (0, node_child_process_1.execFile)(pgDumpExe, args, { maxBuffer: 100 * 1024 * 1024, env: { ...process.env, PGPASSWORD: password } }, (err, stdout, stderr) => {
             if (err) {
                 return reject(new Error(`فشل تشغيل pg_dump: ${stderr || err.message}`));
             }
@@ -426,13 +439,108 @@ async function exportFullSqlBackup() {
             const header = `-- ========================================================\n` +
                 `-- Fludo Supplies ERP Full PostgreSQL Backup\n` +
                 `-- Generated At: ${new Date().toISOString()}\n` +
-                `-- Engine: PostgreSQL 18.x\n` +
+                `-- Engine: PostgreSQL Portable Runtime\n` +
                 `-- Database: fludo_erp\n` +
                 `-- SHA-256 Checksum: ${hash}\n` +
                 `-- ========================================================\n\n`;
             resolve(header + stdout);
         });
     });
+}
+// Export Full Excel "Data Workbook" (One sheet per table + _meta sheet)
+async function exportDatabaseToDataWorkbook(client) {
+    const workbook = new exceljs_1.default.Workbook();
+    workbook.creator = 'Fludo Supplies ERP';
+    workbook.created = new Date();
+    const tables = [
+        'company_profile',
+        'branches',
+        'units',
+        'products',
+        'parties',
+        'cash_accounts',
+        'sales_invoices',
+        'sales_invoice_lines',
+        'purchase_invoices',
+        'purchase_invoice_lines',
+        'payments',
+        'payment_allocations',
+        'expenses',
+        'employees',
+        'attendance',
+        'employee_transactions',
+        'equipment',
+        'shipments',
+        'cash_transfers',
+        'journal_entries',
+        'journal_lines',
+    ];
+    const metaRows = [];
+    for (const tbl of tables) {
+        try {
+            const rowsRes = await client.query(`SELECT * FROM app.${tbl} WHERE is_deleted = false OR is_deleted IS NULL ORDER BY created_at ASC`);
+            const sheet = workbook.addWorksheet(tbl, { views: [{ rightToLeft: true }] });
+            const rows = rowsRes.rows;
+            if (rows.length > 0) {
+                const columns = Object.keys(rows[0]).map((col) => ({
+                    header: col,
+                    key: col,
+                    width: col.includes('id') || col.includes('name') ? 28 : 16,
+                }));
+                sheet.columns = columns;
+                sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+                for (const row of rows) {
+                    // Password protection
+                    if (tbl === 'users') {
+                        delete row.password_hash;
+                        delete row.manager_pin_hash;
+                    }
+                    const sanitizedRow = {};
+                    for (const k of Object.keys(row)) {
+                        let val = row[k];
+                        // Protect against CSV / Excel Formula Injection
+                        if (typeof val === 'string' && /^[=+\-@]/.test(val)) {
+                            val = `'${val}`;
+                        }
+                        if (val instanceof Date) {
+                            val = val.toISOString();
+                        }
+                        sanitizedRow[k] = val;
+                    }
+                    sheet.addRow(sanitizedRow);
+                }
+            }
+            const tableDataStr = JSON.stringify(rows);
+            const tableHash = node_crypto_1.default.createHash('sha256').update(tableDataStr).digest('hex');
+            metaRows.push({
+                table_name: tbl,
+                row_count: rows.length,
+                table_hash: tableHash,
+            });
+        }
+        catch {
+            // Skip if table doesn't exist
+        }
+    }
+    // Add _meta sheet
+    const metaSheet = workbook.addWorksheet('_meta', { views: [{ rightToLeft: true }] });
+    metaSheet.columns = [
+        { header: 'اسم الجدول (Table Name)', key: 'table_name', width: 28 },
+        { header: 'عدد السجلات (Row Count)', key: 'row_count', width: 20 },
+        { header: 'بصمة التشفير (SHA-256 Hash)', key: 'table_hash', width: 45 },
+    ];
+    metaSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    metaSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+    // Add metadata headers
+    metaSheet.addRow({ table_name: '__SYSTEM__', row_count: 0, table_hash: 'Fludo Supplies ERP' });
+    metaSheet.addRow({ table_name: '__SCHEMA_VERSION__', row_count: 3, table_hash: '0003_comprehensive_schema_update' });
+    metaSheet.addRow({ table_name: '__EXPORTED_AT__', row_count: 0, table_hash: new Date().toISOString() });
+    for (const mr of metaRows) {
+        metaSheet.addRow(mr);
+    }
+    // @ts-ignore
+    return await workbook.xlsx.writeBuffer();
 }
 async function generateImportTemplateExcel() {
     const workbook = new exceljs_1.default.Workbook();

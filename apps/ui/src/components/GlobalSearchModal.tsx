@@ -93,7 +93,8 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ isOpen, on
   };
 
   const handleSelect = (item: SearchResult) => {
-    onNavigate(item.route);
+    const targetRoute = ((item.route as string) === 'products' ? 'inventory' : item.route) as SectionKey;
+    onNavigate(targetRoute);
     onClose();
   };
 

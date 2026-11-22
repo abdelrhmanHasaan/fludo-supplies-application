@@ -29,7 +29,7 @@ export const companyRoutes: FastifyPluginAsync = async (fastify) => {
 
     if (res.rows.length === 0) {
       return {
-        name_ar: 'شركة الرضا للتوريدات',
+        name_ar: 'Fludo Supplies',
         name_en: 'AL REDA SUPPLIES CO.',
         tagline: 'مواد البناء والتوريدات العامة',
         address: 'كرداسة — الجيزة',

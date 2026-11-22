@@ -631,7 +631,7 @@ export const SettingsPage: React.FC = () => {
                       type="text"
                       value={editNameAr}
                       onChange={(e) => setEditNameAr(e.target.value)}
-                      placeholder="شركة الرضا للتوريدات"
+                      placeholder="اسم المؤسسة / الشركة"
                       className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-bold"
                       required
                     />
@@ -642,7 +642,7 @@ export const SettingsPage: React.FC = () => {
                       type="text"
                       value={editNameEn}
                       onChange={(e) => setEditNameEn(e.target.value)}
-                      placeholder="AL REDA SUPPLIES CO."
+                      placeholder="Company Name"
                       className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-mono"
                     />
                   </div>

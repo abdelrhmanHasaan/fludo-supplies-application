@@ -46,6 +46,7 @@ export const expensesRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/', async (req, reply) => {
     const { categoryId, expenseDate, amount, paymentMethod, payee, description, cashAccountId } = req.body as any;
     if (!amount || amount <= 0) return reply.status(400).send({ error: 'المبلغ مطلوب ويجب أن يكون أكبر من الصفر' });
+    if (!cashAccountId) return reply.status(400).send({ error: 'اختر الخزينة/المحفظة/الحساب' });
 
     const expenseId = await withTransaction(async (client) => {
       // 1. Ensure category
@@ -55,7 +56,6 @@ export const expensesRoutes: FastifyPluginAsync = async (fastify) => {
         finalCatId = catRes.rows[0]?.id;
       }
 
-      // 2. Ensure cash account
       let finalCashAccId = cashAccountId;
       if (!finalCashAccId) {
         const cashRes = await client.query("SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cashbox') DESC LIMIT 1");

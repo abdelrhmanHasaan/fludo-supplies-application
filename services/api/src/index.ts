@@ -83,6 +83,30 @@ async function autoEnsureSchema() {
         console.log('[API] 0002 migration applied successfully!');
       }
     }
+
+    // Check Migration 0003
+    const m3Check = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_views WHERE schemaname = 'app' AND viewname = 'v_dashboard_metrics'
+      ) AS exists;
+    `).catch(() => ({ rows: [{ exists: false }] }));
+
+    if (!m3Check.rows[0]?.exists) {
+      console.log('[API] Applying 0003_comprehensive_schema_update.sql migration...');
+      const migration3Paths = [
+        path.join(__dirname, '0003_comprehensive_schema_update.sql'),
+        path.join(__dirname, '..', '0003_comprehensive_schema_update.sql'),
+        path.resolve(process.cwd(), 'db/migrations/0003_comprehensive_schema_update.sql'),
+        path.resolve(process.cwd(), '../../db/migrations/0003_comprehensive_schema_update.sql'),
+        path.join(process.cwd(), '0003_comprehensive_schema_update.sql'),
+      ];
+      const sql3Path = migration3Paths.find((p) => fs.existsSync(p));
+      if (sql3Path) {
+        const sql = fs.readFileSync(sql3Path, 'utf8');
+        await pool.query(sql);
+        console.log('[API] 0003 migration applied successfully!');
+      }
+    }
   } catch (err) {
     console.warn('[API] autoEnsureSchema check notice:', err);
   }

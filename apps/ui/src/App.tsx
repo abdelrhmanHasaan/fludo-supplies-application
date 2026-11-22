@@ -14,7 +14,6 @@ import { DailyCenterPage } from './pages/DailyCenterPage';
 import { CustomersPage } from './pages/CustomersPage';
 import { SuppliersPage } from './pages/SuppliersPage';
 import { InventoryPage } from './pages/InventoryPage';
-import { ProductsPage } from './pages/ProductsPage';
 import { InvoicesPage } from './pages/InvoicesPage';
 import { ShipmentsPage } from './pages/ShipmentsPage';
 import { TreasuryPage } from './pages/TreasuryPage';
@@ -31,7 +30,18 @@ const MainApp: React.FC = () => {
   const { company, logoLetter } = useCompany();
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [user, setUser] = useState<any | null>(null);
-  const [currentSection, setCurrentSection] = useState<SectionKey>('dashboard');
+  const [currentSection, setCurrentSection] = useState<SectionKey>(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash.replace('#', '') as SectionKey;
+      const validSections: SectionKey[] = [
+        'dashboard', 'daily', 'customers', 'suppliers', 'inventory',
+        'invoices', 'shipments', 'treasury', 'expenses', 'equipment',
+        'payroll', 'reports', 'dataport', 'settings'
+      ];
+      if (validSections.includes(hash)) return hash;
+    }
+    return 'dashboard';
+  });
   const [pinModalOpen, setPinModalOpen] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
@@ -134,8 +144,16 @@ const MainApp: React.FC = () => {
         setSearchModalOpen(false);
       }
     };
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace('#', '') as SectionKey;
+      if (hash) setCurrentSection(hash);
+    };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('hashchange', handleHashChange);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('hashchange', handleHashChange);
+    };
   }, []);
 
   // 4. Idle Inactivity Lock (15 Minutes)
@@ -414,8 +432,6 @@ const MainApp: React.FC = () => {
         return 'الموردين والمشتريات';
       case 'inventory':
         return 'المخزون وحركة البضاعة';
-      case 'products':
-        return 'المنتجات والأسعار';
       case 'invoices':
         return 'الفواتير والطباعة';
       case 'shipments':
@@ -462,7 +478,6 @@ const MainApp: React.FC = () => {
           {currentSection === 'customers' && <CustomersPage />}
           {currentSection === 'suppliers' && <SuppliersPage />}
           {currentSection === 'inventory' && <InventoryPage />}
-          {currentSection === 'products' && <ProductsPage />}
           {currentSection === 'invoices' && <InvoicesPage />}
           {currentSection === 'shipments' && <ShipmentsPage />}
           {currentSection === 'treasury' && <TreasuryPage />}

@@ -64,6 +64,83 @@ const partiesRoutes = async (fastify) => {
         ]);
         return res.rows[0];
     });
+    // Party Activity Ledger (from v_party_activity)
+    fastify.get('/:id/activity', async (req, reply) => {
+        const { id } = req.params;
+        const res = await db_js_1.pool.query(`SELECT * FROM app.v_party_activity WHERE party_id = $1 ORDER BY occurred_at DESC, document_id DESC`, [id]);
+        return res.rows;
+    });
+    // Party Summary Cards (from v_party_summary)
+    fastify.get('/:id/summary', async (req, reply) => {
+        const { id } = req.params;
+        const res = await db_js_1.pool.query(`SELECT * FROM app.v_party_summary WHERE party_id = $1`, [id]);
+        if (res.rows.length === 0)
+            return reply.status(404).send({ error: 'الطرف غير موجود' });
+        return res.rows[0];
+    });
+    // Party Shipments Movement (Trucks / Transport)
+    fastify.get('/:id/shipments', async (req, reply) => {
+        const { id } = req.params;
+        const res = await db_js_1.pool.query(`SELECT
+        sh.id,
+        sh.shipment_no,
+        sh.departed_at,
+        sh.destination,
+        sh.status,
+        si.id AS invoice_id,
+        si.invoice_no,
+        si.lines_total,
+        si.discount_amount,
+        si.net_total,
+        e.full_name AS driver_name,
+        eq.name AS vehicle_name,
+        eq.plate_no,
+        (
+          SELECT json_agg(json_build_object(
+            'product_name', p.name,
+            'qty', sil.qty,
+            'unit_name', sil.unit_name,
+            'unit_price', sil.unit_price,
+            'discount_amount', sil.discount_amount,
+            'line_total', sil.line_total
+          ))
+          FROM app.sales_invoice_lines sil
+          JOIN app.products p ON p.id = sil.product_id
+          WHERE sil.invoice_id = si.id AND NOT sil.is_deleted
+        ) AS items
+      FROM app.shipments sh
+      JOIN app.sales_invoices si ON si.id = sh.invoice_id
+      LEFT JOIN app.employees e ON e.id = sh.driver_id
+      LEFT JOIN app.equipment eq ON eq.id = sh.vehicle_id
+      WHERE si.party_id = $1 AND NOT sh.is_deleted AND NOT si.is_deleted
+      ORDER BY sh.departed_at DESC NULLS LAST, sh.created_at DESC`, [id]);
+        return res.rows;
+    });
+    // Update Party (PIN protected)
+    fastify.put('/:id', async (req, reply) => {
+        const { id } = req.params;
+        const { name, phone, category, relationship_start, credit_limit, supplies_text, notes, is_active } = req.body;
+        try {
+            const res = await db_js_1.pool.query(`UPDATE app.parties
+         SET name = COALESCE($1, name),
+             phone = $2,
+             category = $3,
+             relationship_start = $4,
+             credit_limit = $5,
+             supplies_text = $6,
+             notes = $7,
+             is_active = COALESCE($8, is_active),
+             updated_at = now()
+         WHERE id = $9
+         RETURNING *`, [name, phone, category, relationship_start, credit_limit, supplies_text, notes, is_active, id]);
+            if (res.rows.length === 0)
+                return reply.status(404).send({ error: 'الطرف غير موجود' });
+            return res.rows[0];
+        }
+        catch (err) {
+            return reply.status(400).send({ error: err.message });
+        }
+    });
     // Party Statement Timeline
     fastify.get('/:id/statement', async (req, reply) => {
         const { id } = req.params;

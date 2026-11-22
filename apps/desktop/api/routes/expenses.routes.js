@@ -45,6 +45,8 @@ const expensesRoutes = async (fastify) => {
         const { categoryId, expenseDate, amount, paymentMethod, payee, description, cashAccountId } = req.body;
         if (!amount || amount <= 0)
             return reply.status(400).send({ error: 'المبلغ مطلوب ويجب أن يكون أكبر من الصفر' });
+        if (!cashAccountId)
+            return reply.status(400).send({ error: 'اختر الخزينة/المحفظة/الحساب' });
         const expenseId = await (0, db_js_1.withTransaction)(async (client) => {
             // 1. Ensure category
             let finalCatId = categoryId;
@@ -52,7 +54,6 @@ const expensesRoutes = async (fastify) => {
                 const catRes = await client.query('SELECT id FROM app.expense_categories WHERE is_deleted = false LIMIT 1');
                 finalCatId = catRes.rows[0]?.id;
             }
-            // 2. Ensure cash account
             let finalCashAccId = cashAccountId;
             if (!finalCashAccId) {
                 const cashRes = await client.query("SELECT id FROM app.cash_accounts WHERE is_active = true ORDER BY (kind = 'cashbox') DESC LIMIT 1");

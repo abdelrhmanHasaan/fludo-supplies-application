@@ -78,6 +78,13 @@ if (fs.existsSync(sqlMigration2)) {
   console.log('  ✓ 0002 SQL schema migration copied to desktop package.');
 }
 
+const sqlMigration3 = path.join(rootDir, 'db', 'migrations', '0003_comprehensive_schema_update.sql');
+if (fs.existsSync(sqlMigration3)) {
+  fs.copyFileSync(sqlMigration3, path.join(apiTarget, '0003_comprehensive_schema_update.sql'));
+  fs.copyFileSync(sqlMigration3, path.join(rootDir, 'apps', 'desktop', '0003_comprehensive_schema_update.sql'));
+  console.log('  ✓ 0003 SQL schema migration copied to desktop package.');
+}
+
 // Ensure PostgreSQL Portable Runtime is staged in apps/desktop/pgsql
 const pgsqlDest = path.join(rootDir, 'apps', 'desktop', 'pgsql');
 const pgsqlDestExe = path.join(pgsqlDest, 'bin', 'postgres.exe');
