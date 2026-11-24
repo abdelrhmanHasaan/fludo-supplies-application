@@ -1,6 +1,6 @@
 {
   "name": "fludo-supplies-erp",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "private": true,
   "description": "Building-Materials Yard ERP (Offline-First Windows Desktop + PostgreSQL) for Fludo Supplies",
   "workspaces": [

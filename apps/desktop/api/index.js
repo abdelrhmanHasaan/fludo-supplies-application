@@ -145894,7 +145894,7 @@ async function start() {
   });
   const healthHandler = async () => ({
     status: "healthy",
-    version: "1.6.0",
+    version: "1.7.0",
     time: (/* @__PURE__ */ new Date()).toISOString()
   });
   fastify.get("/health", healthHandler);

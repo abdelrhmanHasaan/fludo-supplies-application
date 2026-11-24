@@ -6,7 +6,7 @@ import { Navbar } from './components/Navbar';
 import { ManagerPinModal } from './components/ManagerPinModal';
 import { FirstRunWizard } from './components/FirstRunWizard';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
-import { Lock, ArrowRight, ShieldAlert, AlertCircle, RefreshCw, FolderOpen, Download, Terminal } from 'lucide-react';
+import { Lock, ArrowRight, ShieldAlert, AlertCircle, RefreshCw, FolderOpen, Download, Terminal, RotateCcw } from 'lucide-react';
 
 // Pages
 import { DashboardPage } from './pages/DashboardPage';
@@ -51,6 +51,7 @@ const MainApp: React.FC = () => {
   const [startupStep, setStartupStep] = useState<string>('جاري تجهيز محرك البيانات الآمن وبدء تشغيل النظام...');
   const [startupErrorDetails, setStartupErrorDetails] = useState<{ step?: string; error?: string; logsPath?: string } | null>(null);
   const [diagExportMsg, setDiagExportMsg] = useState<string | null>(null);
+  const [restoreMsg, setRestoreMsg] = useState<string | null>(null);
 
   // Login form state (strictly clean single password input)
   const [loginPass, setLoginPass] = useState('');
@@ -281,6 +282,21 @@ const MainApp: React.FC = () => {
       }
     };
 
+    const handleRestoreBackup = async () => {
+      if ((window as any).electronAPI?.restoreLatestBackup) {
+        setRestoreMsg('جاري فحص واستعادة أحدث نسخة احتياطية...');
+        const res = await (window as any).electronAPI.restoreLatestBackup();
+        if (res?.success) {
+          setRestoreMsg(`تمت استعادة النسخة الاحتياطية (${res.backupFile}) بنجاح! جاري إعادة المحاولة...`);
+          setTimeout(() => {
+            handleRetry();
+          }, 1500);
+        } else {
+          setRestoreMsg(`تعذر الاستعادة: ${res?.error || 'لم يتم العثور على نسخة احتياطية'}`);
+        }
+      }
+    };
+
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 p-8 text-center space-y-5 animate-in fade-in duration-200">
@@ -309,6 +325,12 @@ const MainApp: React.FC = () => {
             </div>
           )}
 
+          {restoreMsg && (
+            <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs font-bold leading-relaxed">
+              {restoreMsg}
+            </div>
+          )}
+
           <div className="space-y-2 pt-2">
             <button
               onClick={handleRetry}
@@ -316,6 +338,15 @@ const MainApp: React.FC = () => {
             >
               <RefreshCw className="w-4 h-4" />
               <span>إعادة المحاولة الآن</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleRestoreBackup}
+              className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>استعادة أحدث نسخة احتياطية (Restore Backup)</span>
             </button>
 
             <div className="grid grid-cols-2 gap-2">

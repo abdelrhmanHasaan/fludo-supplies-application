@@ -15,6 +15,18 @@ let safeDirs: { baseDir: string; dataDir: string; logsDir: string; backupsDir: s
 
 // Safe ASCII Path Resolver (Guaranteed ASCII, no Arabic username crash, NO dependency on 8.3 names)
 function resolveSafeAsciiDir(): { baseDir: string; dataDir: string; logsDir: string; backupsDir: string } {
+  // 0. Explicit Environment Override (for safe testing/upgrading/isolated environments)
+  if (process.env.FLUDO_BASE_DIR) {
+    const customBase = path.resolve(process.env.FLUDO_BASE_DIR);
+    fs.mkdirSync(customBase, { recursive: true });
+    return {
+      baseDir: customBase,
+      dataDir: path.join(customBase, 'data'),
+      logsDir: path.join(customBase, 'logs'),
+      backupsDir: path.join(customBase, 'backups'),
+    };
+  }
+
   // 1. Primary: C:\ProgramData\FludoSuppliesERP (Standard Windows shared ASCII path)
   const progData = process.env.ProgramData || 'C:\\ProgramData';
   const cand1 = path.join(progData, 'FludoSuppliesERP');
@@ -62,13 +74,15 @@ function resolveSafeAsciiDir(): { baseDir: string; dataDir: string; logsDir: str
 // Windows ACL Security Hardening (Restricting data directory to current user, SYSTEM, Administrators)
 function applyFolderAcl(targetDir: string) {
   try {
+    const isDir = fs.existsSync(targetDir) && fs.statSync(targetDir).isDirectory();
+    const permSuffix = isDir ? ':(OI)(CI)F' : ':F';
     const currentUsername = process.env.USERNAME || 'SYSTEM';
     execFileSync('icacls', [
       targetDir,
       '/inheritance:r',
-      '/grant:r', `${currentUsername}:(OI)(CI)F`,
-      '/grant:r', 'SYSTEM:(OI)(CI)F',
-      '/grant:r', 'Administrators:(OI)(CI)F'
+      '/grant', `${currentUsername}${permSuffix}`,
+      '/grant', `SYSTEM${permSuffix}`,
+      '/grant', `Administrators${permSuffix}`
     ], { stdio: 'ignore', windowsHide: true });
     logDesktop(`[SECURITY] ACL applied successfully to: ${targetDir}`);
   } catch (aclErr: any) {
@@ -94,7 +108,7 @@ function getOrCreateDbCredentials(baseDir: string): DbCredentials {
     ownerPass: crypto.randomBytes(32).toString('hex'),
     runtimePass: crypto.randomBytes(32).toString('hex'),
   };
-  fs.writeFileSync(authFile, JSON.stringify(creds, null, 2), { encoding: 'utf8', mode: 0o600 });
+  fs.writeFileSync(authFile, JSON.stringify(creds, null, 2), { encoding: 'utf8' });
   applyFolderAcl(authFile);
   return creds;
 }
@@ -118,7 +132,7 @@ process.on('unhandledRejection', (reason: any) => {
   logDesktop(`[FATAL REJECTION] ${reason?.stack || reason?.message || reason}`);
 });
 
-logDesktop(`=== APP LAUNCH (PID: ${process.pid}, version: 1.5.0) ===`);
+logDesktop(`=== APP LAUNCH (PID: ${process.pid}, version: 1.7.0) ===`);
 
 // 1. Single Instance Lock (Requirement 4)
 const gotTheLock = app.requestSingleInstanceLock();
@@ -133,7 +147,7 @@ let apiServerInstance: any = null;
 let pgProcess: ChildProcess | null = null;
 let dynamicPgPort = 0;
 let dynamicApiPort = 0;
-let apiSecretToken = crypto.randomBytes(32).toString('hex');
+let apiSecretToken = process.env.APP_SECRET_TOKEN || crypto.randomBytes(32).toString('hex');
 let pgBinaries: any = null;
 let isStartingUp = false;
 let isSystemReady = false;
@@ -569,17 +583,25 @@ host    all             all             ::1/128                 scram-sha-256
 
         logDesktop(`[MIGRATION] Applying ${mig.version} from ${migPath}...`);
         broadcastProgress('migrations', `جاري تطبيق الترحيل الهيكلي (${mig.version})...`, 78);
-        execFileSync(pgBinaries.psqlExe, [
-          '-h', '127.0.0.1',
-          '-p', String(dynamicPgPort),
-          '-U', 'erp_owner',
-          '-d', 'fludo_erp',
-          '-f', migPath,
-        ], {
-          env: { ...process.env, PGPASSWORD: dbCreds.ownerPass },
-          stdio: 'pipe',
-          windowsHide: true,
-        });
+        try {
+          execFileSync(pgBinaries.psqlExe, [
+            '-h', '127.0.0.1',
+            '-p', String(dynamicPgPort),
+            '-U', 'erp_owner',
+            '-d', 'fludo_erp',
+            '-v', 'ON_ERROR_STOP=1',
+            '-f', migPath,
+          ], {
+            env: { ...process.env, PGPASSWORD: dbCreds.ownerPass },
+            stdio: 'pipe',
+            windowsHide: true,
+          });
+        } catch (migErr: any) {
+          const errMsg = `قاعدة البيانات بحاجة إلى تحديث أو استعادة: فشل تطبيق الترحيل الهيكلي (${mig.version}): ${migErr?.stderr || migErr?.message || migErr}. تم إيقاف النظام لمنع فقدان البيانات.`;
+          logDesktop(`[MIGRATION ERROR] ${errMsg}`);
+          broadcastError('migration_failed', errMsg);
+          throw new Error(errMsg);
+        }
 
         // Record in app.schema_migrations
         execFileSync(pgBinaries.psqlExe, [
@@ -626,7 +648,7 @@ host    all             all             ::1/128                 scram-sha-256
     );
 
     if (finalCount < REQUIRED_SCHEMA_VERSION) {
-      const errMsg = `إصدار قاعدة البيانات غير متوافق (المطلوب: ${REQUIRED_SCHEMA_VERSION}، تم تطبيق: ${finalCount}). تم إيقاف النظام لمنع فقدان البيانات.`;
+      const errMsg = `قاعدة البيانات بحاجة إلى تحديث (المطلوب: إصدار ${REQUIRED_SCHEMA_VERSION}، الحالي: ${finalCount}). تم إيقاف النظام لمنع فقدان البيانات.`;
       broadcastError('REQUIRED_SCHEMA_VERSION_MISMATCH', errMsg);
       throw new Error(errMsg);
     }
@@ -708,6 +730,13 @@ host    all             all             ::1/128                 scram-sha-256
 
     broadcastProgress('ready', 'تم تشغيل النظام ومحرك البيانات بنجاح!', 100);
     logDesktop(`[STARTUP] Entire system running successfully! API: ${dynamicApiPort}, DB: ${dynamicPgPort}`);
+    try {
+      fs.writeFileSync(path.join(safeDirs.baseDir, 'session.json'), JSON.stringify({
+        token: apiSecretToken,
+        apiPort: dynamicApiPort,
+        dbPort: dynamicPgPort,
+      }, null, 2), 'utf8');
+    } catch {}
 
     isSystemReady = true;
     startupError = null;
@@ -844,6 +873,55 @@ app.whenReady().then(async () => {
       fs.writeFileSync(targetFile, report, 'utf8');
       return { success: true, path: targetFile };
     } catch (err: any) {
+      return { success: false, error: err?.message };
+    }
+  });
+
+  ipcMain.handle('restore-latest-backup', async () => {
+    try {
+      logDesktop('[RESTORE] User requested restoring latest pre-migration backup...');
+      if (!safeDirs || !safeDirs.backupsDir || !fs.existsSync(safeDirs.backupsDir)) {
+        return { success: false, error: 'مجلد النسخ الاحتياطية غير موجود' };
+      }
+      const backupsDir = safeDirs.backupsDir;
+      const files = fs.readdirSync(backupsDir)
+        .filter((f) => f.endsWith('.sql'))
+        .map((f) => ({
+          file: f,
+          path: path.join(backupsDir, f),
+          time: fs.statSync(path.join(backupsDir, f)).mtimeMs,
+        }))
+        .sort((a, b) => b.time - a.time);
+
+      if (files.length === 0) {
+        return { success: false, error: 'لا توجد نسخ احتياطية سابقة للاستعادة' };
+      }
+
+      const latest = files[0];
+      logDesktop(`[RESTORE] Restoring from latest backup: ${latest.path}`);
+
+      const dbCreds = getOrCreateDbCredentials(safeDirs.baseDir);
+
+      // Terminate any active connections to fludo_erp
+      try {
+        execFileSync(pgBinaries.psqlExe, [
+          '-h', '127.0.0.1', '-p', String(dynamicPgPort),
+          '-U', 'erp_owner', '-d', 'postgres',
+          '-c', `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'fludo_erp' AND pid <> pg_backend_pid();`
+        ], { env: { ...process.env, PGPASSWORD: dbCreds.ownerPass }, stdio: 'pipe', windowsHide: true });
+      } catch {}
+
+      // Execute restore
+      execFileSync(pgBinaries.psqlExe, [
+        '-h', '127.0.0.1', '-p', String(dynamicPgPort),
+        '-U', 'erp_owner', '-d', 'fludo_erp',
+        '-f', latest.path
+      ], { env: { ...process.env, PGPASSWORD: dbCreds.ownerPass }, stdio: 'pipe', windowsHide: true });
+
+      logDesktop(`[RESTORE] Backup ${latest.file} restored successfully.`);
+      return { success: true, backupFile: latest.file };
+    } catch (err: any) {
+      logDesktop(`[RESTORE ERROR] ${err?.message}`);
       return { success: false, error: err?.message };
     }
   });

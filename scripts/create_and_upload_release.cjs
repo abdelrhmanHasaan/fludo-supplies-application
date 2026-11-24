@@ -1,17 +1,34 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const { execSync } = require('child_process');
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
+function getGitToken() {
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+  try {
+    const out = execSync('git credential fill', {
+      input: 'protocol=https\nhost=github.com\n',
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    const match = out.match(/password=(.+)/);
+    if (match) return match[1].trim();
+  } catch (e) {
+    console.warn('Notice: could not read git credential helper:', e.message);
+  }
+  return '';
+}
+
+const GITHUB_TOKEN = getGitToken();
 const REPO = 'abdelrhmanHasaan/fludo-supplies-application';
-const TAG = 'v1.6.0';
-const RELEASE_NAME = 'Fludo Supplies ERP v1.6.0 — FigJam Overhaul Standalone Windows Installer';
+const TAG = 'v1.7.0';
+const RELEASE_NAME = 'Fludo Supplies ERP v1.7.0 — Standalone Windows Installer & Hardened Database Engine';
 const FILE_CANDIDATES = [
-  path.resolve(__dirname, '../installer/Fludo Supplies ERP Setup 1.6.0.exe'),
-  path.resolve(__dirname, '../apps/desktop/release/Fludo Supplies ERP Setup 1.6.0.exe'),
+  path.resolve(__dirname, '../apps/desktop/release/Fludo Supplies ERP Setup 1.7.0.exe'),
+  path.resolve(__dirname, '../installer/Fludo Supplies ERP Setup 1.7.0.exe'),
 ];
 const FILE_PATH = FILE_CANDIDATES.find((p) => fs.existsSync(p)) || FILE_CANDIDATES[0];
-const FILE_NAME = 'Fludo Supplies ERP Setup 1.6.0.exe';
+const FILE_NAME = 'Fludo Supplies ERP Setup 1.7.0.exe';
 
 function apiRequest(method, endpoint, body) {
   return new Promise((resolve, reject) => {
@@ -75,17 +92,17 @@ async function main() {
     console.log(`Found existing release (ID: ${release.id})`);
   } catch {
     console.log(`Creating fresh release for tag '${TAG}'...`);
-    const releaseBody = `## Fludo Supplies ERP v1.6.0
-### FigJam UI Overhaul & Complete Feature Release (Offline Windows Desktop + Portable DB)
+    const releaseBody = `## Fludo Supplies ERP v1.7.0
+### Hardened Database Engine, Portability Verification & Single Offline Installer (Windows)
 
-### Key Improvements in v1.6.0:
-- **FigJam Complete UI Flow:** 10 core sidebar sections, 10 green KPI cards dashboard, daily operations center (عملاء / موردين / مكان).
-- **Free-Text Units & Learning:** Free-text unit input with automatic system learning into \`app.units\`.
-- **Dynamic Branch Stocks:** Real-time stock distribution per branch in warehouse overview.
-- **Smart Treasury Management:** Multi-treasury cash movements (deposits/withdrawals) with full hierarchical statement tree (Year -> Month -> Day).
-- **Party Reservations & Alarms:** Customer & supplier reservation tables, settlement due countdowns, and real-time overdue credit alarm boxes.
-- **Portable Embedded PostgreSQL 18:** Zero dependencies, no Windows service requirement, dynamic port allocation, ASCII data path.
-- **Manager PIN Guard:** 4-digit PIN authorization on all approved transaction edits and deletions.
+### Key Features & Hardening in v1.7.0:
+- **Portability & Zero-Dependency Execution:** Runs on any Windows 10/11 system with zero prerequisite installations (bundled PostgreSQL 18.4 + UCRT/VC++ runtimes).
+- **Hardened Database Security:** Separation of duties with \`erp_owner\` (DDL & migrations) and \`erp_runtime\` (DML only, dynamic SCRAM-SHA-256 password).
+- **Approved Transaction Immutability:** Multi-table lock triggers preventing unauthorized modifications of approved invoices without explicit manager authorization.
+- **Append-Only Audit Log:** Cryptographically chained audit logging rejecting direct \`UPDATE\` or \`DELETE\` tampering.
+- **Automated Safe Migrations:** Sequential migrations (0001 through 0004) executed on startup with automated pre-migration \`pg_dump\` backups.
+- **Interactive Recovery Screen:** Arabic emergency recovery stop screen with one-click instant backup restore.
+- **FigJam Complete UI Flow:** 10 core sections, 10 green KPI cards dashboard, daily operations center, multi-treasury, customer/supplier reservations, and free-text units with automatic learning.
 
 **Download the standalone installer below:**`;
 

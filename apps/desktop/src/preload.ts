@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getApiConfig: () => ipcRenderer.invoke('get-api-config'),
   openLogsFolder: () => ipcRenderer.send('open-logs-folder'),
   exportDiagnostics: () => ipcRenderer.invoke('export-diagnostics'),
+  restoreLatestBackup: () => ipcRenderer.invoke('restore-latest-backup'),
   retryStartup: () => ipcRenderer.send('retry-startup'),
   onStartupProgress: (callback: (data: any) => void) => {
     ipcRenderer.on('startup-progress', (_event, value) => callback(value));

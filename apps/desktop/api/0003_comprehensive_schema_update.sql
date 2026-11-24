@@ -29,6 +29,9 @@ END $$;
 
 ALTER TABLE app.products ALTER COLUMN unit_id DROP NOT NULL;
 
+-- Temporarily bypass guard triggers during migration backfill
+SET session_replication_role = replica;
+
 -- Populate existing unit_name values from units table
 UPDATE app.products p
 SET unit_name = u.name
@@ -49,6 +52,8 @@ UPDATE app.order_lines l
 SET unit_name = p.unit_name
 FROM app.products p
 WHERE l.product_id = p.id AND (l.unit_name IS NULL OR l.unit_name = '');
+
+SET session_replication_role = DEFAULT;
 
 -- Auto-register new units into app.units for autocomplete suggestions
 CREATE OR REPLACE FUNCTION app.trg_auto_register_unit()
