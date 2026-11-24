@@ -28,7 +28,7 @@ const companyRoutes = async (fastify) => {
         if (res.rows.length === 0) {
             return {
                 name_ar: 'Fludo Supplies',
-                name_en: 'AL REDA SUPPLIES CO.',
+                name_en: 'Fludo Supplies ERP',
                 tagline: 'مواد البناء والتوريدات العامة',
                 address: 'كرداسة — الجيزة',
                 phones: '01030343576',
@@ -332,6 +332,65 @@ const companyRoutes = async (fastify) => {
         catch (err) {
             return reply.status(500).send({ error: err.message || 'فشل تصفير النظام' });
         }
+    });
+    // 5. Get all branches / sites
+    fastify.get('/branches', async (req, reply) => {
+        const res = await db_js_1.pool.query(`
+      SELECT id, code, name, address, is_active, created_at, updated_at
+      FROM app.branches
+      WHERE is_deleted = false
+      ORDER BY created_at ASC
+    `);
+        return res.rows;
+    });
+    // 6. Create a new branch / site
+    fastify.post('/branches', async (req, reply) => {
+        const { name, address, code } = req.body;
+        if (!name || !name.trim()) {
+            return reply.status(400).send({ error: 'اسم الموقع / المقر مطلوب' });
+        }
+        const branchCode = code?.trim() || `BR${Date.now().toString().slice(-4)}`;
+        const res = await db_js_1.pool.query(`INSERT INTO app.branches (name, address, code, is_active)
+       VALUES ($1, $2, $3, true)
+       RETURNING *`, [name.trim(), address?.trim() || null, branchCode]);
+        return {
+            status: 'success',
+            branch: res.rows[0],
+            message: 'تم إضافة موقع النشاط بنجاح',
+        };
+    });
+    // 7. Update branch
+    fastify.put('/branches/:id', async (req, reply) => {
+        const { id } = req.params;
+        const { name, address, is_active } = req.body;
+        if (!name || !name.trim()) {
+            return reply.status(400).send({ error: 'اسم الموقع / المقر مطلوب' });
+        }
+        const res = await db_js_1.pool.query(`UPDATE app.branches
+       SET name = $1, address = COALESCE($2, address), is_active = COALESCE($3, is_active), updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`, [name.trim(), address?.trim() || null, is_active, id]);
+        if (res.rows.length === 0) {
+            return reply.status(404).send({ error: 'الموقع غير موجود' });
+        }
+        return {
+            status: 'success',
+            branch: res.rows[0],
+            message: 'تم تحديث موقع النشاط بنجاح',
+        };
+    });
+    // 8. Delete / Deactivate branch
+    fastify.delete('/branches/:id', async (req, reply) => {
+        const { id } = req.params;
+        const countRes = await db_js_1.pool.query('SELECT count(*) FROM app.branches WHERE is_deleted = false AND is_active = true');
+        if (parseInt(countRes.rows[0].count, 10) <= 1) {
+            return reply.status(400).send({ error: 'لا يمكن حذف المقر الوحيد، يجب أن يحتوي النظام على موقع نشاط واحد على الأقل' });
+        }
+        await db_js_1.pool.query(`UPDATE app.branches SET is_deleted = true, is_active = false, deleted_at = NOW() WHERE id = $1`, [id]);
+        return {
+            status: 'success',
+            message: 'تم حذف موقع النشاط بنجاح',
+        };
     });
 };
 exports.companyRoutes = companyRoutes;

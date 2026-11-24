@@ -30,9 +30,9 @@ async function runAllTests() {
 
   try {
     // -------------------------------------------------------------
-    // SECTION 1: Database Schema & Migration 0003
+    // SECTION 1: Database Schema & Migrations 0003 & 0004
     // -------------------------------------------------------------
-    console.log('--- 1. Database Schema & Migration 0003 ---');
+    console.log('--- 1. Database Schema & Migrations 0003 & 0004 ---');
     
     // 1.1 Free-text unit_name column checks
     const prodUnitRes = await pool.query(
@@ -74,16 +74,27 @@ async function runAllTests() {
     );
     assert(cashAccTableRes.rows.length === 2, 'cash_accounts has kind and is_active columns');
 
-    // 1.6 Unified Views check
-    const viewsRes = await pool.query(
-      `SELECT table_name FROM information_schema.views WHERE table_schema='app' AND table_name IN ('v_party_activity', 'v_party_summary', 'v_dashboard_metrics', 'v_product_availability');`
+    // 1.6 FigJam 0004 Schema Checks: cash_movements, invoice_prints, branch/location columns
+    const m4Tables = await pool.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema='app' AND table_name IN ('cash_movements', 'invoice_prints', 'branches');`
     );
-    assert(viewsRes.rows.length === 4, 'All 4 core views (party_activity, party_summary, dashboard_metrics, product_availability) exist');
+    assert(m4Tables.rows.length === 3, 'Migration 0004 tables exist (cash_movements, invoice_prints, branches)');
+
+    const m4Columns = await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema='app' AND table_name='sales_invoices' AND column_name IN ('location_type', 'site_id', 'place_party_id');`
+    );
+    assert(m4Columns.rows.length === 3, 'sales_invoices has location_type, site_id, and place_party_id');
+
+    // 1.7 Unified Views check
+    const viewsRes = await pool.query(
+      `SELECT table_name FROM information_schema.views WHERE table_schema='app' AND table_name IN ('v_party_activity', 'v_party_summary', 'v_dashboard_metrics', 'v_product_availability', 'v_party_alarms', 'v_reservation_lines');`
+    );
+    assert(viewsRes.rows.length === 6, 'All 6 core views (party_activity, party_summary, dashboard_metrics, product_availability, party_alarms, reservation_lines) exist');
 
     // -------------------------------------------------------------
-    // SECTION 2: Dashboard 8 Numbers Computation
+    // SECTION 2: Dashboard 10 Numbers Computation
     // -------------------------------------------------------------
-    console.log('\n--- 2. Dashboard 8 Metrics Verification ---');
+    console.log('\n--- 2. Dashboard 10 Metrics Verification ---');
     const dashRes = await pool.query(`SELECT * FROM app.v_dashboard_metrics;`);
     assert(dashRes.rows.length === 1, 'v_dashboard_metrics returns exactly 1 summary row');
     const m = dashRes.rows[0];
@@ -93,10 +104,12 @@ async function runAllTests() {
       m.current_liquidity !== undefined &&
       m.current_month_sales !== undefined &&
       m.today_sales !== undefined &&
+      m.current_month_premises_expenses !== undefined &&
+      m.current_month_equipment_expenses !== undefined &&
       m.active_customers_count !== undefined &&
       m.active_suppliers_count !== undefined &&
       m.active_employees_count !== undefined,
-      'Dashboard metrics contains strictly all 8 database-calculated financial fields',
+      'Dashboard metrics contains strictly all 10 FigJam database-calculated financial fields',
       JSON.stringify(m)
     );
 
@@ -151,9 +164,12 @@ async function runAllTests() {
     }
 
     // -------------------------------------------------------------
-    // SECTION 5: Treasury & Cash Accounts
+    // SECTION 5: Treasury & Cash Accounts & Movements
     // -------------------------------------------------------------
-    console.log('\n--- 5. Treasury Multi-kind Accounts & Transfers ---');
+    console.log('\n--- 5. Treasury Multi-kind Accounts & Movements ---');
+    await pool.query(`DELETE FROM app.cash_movements WHERE cash_account_id IN (SELECT id FROM app.cash_accounts WHERE name = 'محفظة فودافون كاش E2E');`);
+    await pool.query(`DELETE FROM app.cash_accounts WHERE name = 'محفظة فودافون كاش E2E';`);
+
     const accInsert = await pool.query(
       `INSERT INTO app.cash_accounts (name, kind, opening_balance, is_active)
        VALUES ('محفظة فودافون كاش E2E', 'wallet', 10000, true)
@@ -163,12 +179,31 @@ async function runAllTests() {
     assert(accInsert.rows[0].kind === 'wallet', 'Created cash account with kind=wallet');
     assert(accInsert.rows[0].is_active === true, 'Cash account active flag works');
 
+    // Test deposit cash movement
+    const depositRes = await pool.query(
+      `INSERT INTO app.cash_movements (cash_account_id, direction, amount, movement_date, note)
+       VALUES ($1, 'in', 5000, CURRENT_DATE, 'إيداع إضافي تجريبي')
+       RETURNING id, amount;`,
+      [testAccId]
+    );
+    assert(depositRes.rows.length === 1 && Number(depositRes.rows[0].amount) === 5000, 'Cash movement deposit inserted cleanly');
+
+    // Test withdrawal cash movement
+    const withdrawRes = await pool.query(
+      `INSERT INTO app.cash_movements (cash_account_id, direction, amount, movement_date, note)
+       VALUES ($1, 'out', 1500, CURRENT_DATE, 'سحب نقدي تجريبي')
+       RETURNING id, amount;`,
+      [testAccId]
+    );
+    assert(withdrawRes.rows.length === 1 && Number(withdrawRes.rows[0].amount) === 1500, 'Cash movement withdrawal inserted cleanly');
+
     // Toggle active flag
     await pool.query(`UPDATE app.cash_accounts SET is_active = false WHERE id = $1;`, [testAccId]);
     const accCheck = await pool.query(`SELECT is_active FROM app.cash_accounts WHERE id = $1;`, [testAccId]);
     assert(accCheck.rows[0].is_active === false, 'Cash account active flag can be disabled/toggled');
 
-    // Cleanup
+    // Cleanup cash movements and account
+    await pool.query(`DELETE FROM app.cash_movements WHERE cash_account_id = $1;`, [testAccId]);
     await pool.query(`DELETE FROM app.cash_accounts WHERE id = $1;`, [testAccId]);
 
     // -------------------------------------------------------------

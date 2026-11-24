@@ -4,10 +4,14 @@ const https = require('https');
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const REPO = 'abdelrhmanHasaan/fludo-supplies-application';
-const TAG = 'v1.5.0';
-const RELEASE_NAME = 'Fludo Supplies ERP v1.5.0 — Standalone Windows Installer';
-const FILE_PATH = path.resolve(__dirname, '../installer/Fludo Supplies ERP Setup 1.5.0.exe');
-const FILE_NAME = 'Fludo Supplies ERP Setup 1.5.0.exe';
+const TAG = 'v1.6.0';
+const RELEASE_NAME = 'Fludo Supplies ERP v1.6.0 — FigJam Overhaul Standalone Windows Installer';
+const FILE_CANDIDATES = [
+  path.resolve(__dirname, '../installer/Fludo Supplies ERP Setup 1.6.0.exe'),
+  path.resolve(__dirname, '../apps/desktop/release/Fludo Supplies ERP Setup 1.6.0.exe'),
+];
+const FILE_PATH = FILE_CANDIDATES.find((p) => fs.existsSync(p)) || FILE_CANDIDATES[0];
+const FILE_NAME = 'Fludo Supplies ERP Setup 1.6.0.exe';
 
 function apiRequest(method, endpoint, body) {
   return new Promise((resolve, reject) => {
@@ -71,15 +75,17 @@ async function main() {
     console.log(`Found existing release (ID: ${release.id})`);
   } catch {
     console.log(`Creating fresh release for tag '${TAG}'...`);
-    const releaseBody = `## Fludo Supplies ERP v1.5.0
-### Standalone Windows Edition (No Admin, Zero Fixed Ports, Portable DB)
+    const releaseBody = `## Fludo Supplies ERP v1.6.0
+### FigJam UI Overhaul & Complete Feature Release (Offline Windows Desktop + Portable DB)
 
-### Key Improvements:
-- **Portable Embedded PostgreSQL 18:** Zero dependencies, no Windows service requirement.
-- **ASCII-Safe Data Path:** Completely isolated to \`C:\\ProgramData\\FludoSuppliesERP\\data\` to avoid Arabic Windows username path crashes.
-- **Dynamic Port Allocation:** Zero hardcoded ports (no 4000/5433). Both DB and API bind to random free ports with security tokens.
-- **Crash Recovery & Single-Instance Lock:** Detects and cleans stale postmaster.pid automatically.
-- **Passed Clean VM Simulation:** 24/24 tests passed under simulated client environment.
+### Key Improvements in v1.6.0:
+- **FigJam Complete UI Flow:** 10 core sidebar sections, 10 green KPI cards dashboard, daily operations center (عملاء / موردين / مكان).
+- **Free-Text Units & Learning:** Free-text unit input with automatic system learning into \`app.units\`.
+- **Dynamic Branch Stocks:** Real-time stock distribution per branch in warehouse overview.
+- **Smart Treasury Management:** Multi-treasury cash movements (deposits/withdrawals) with full hierarchical statement tree (Year -> Month -> Day).
+- **Party Reservations & Alarms:** Customer & supplier reservation tables, settlement due countdowns, and real-time overdue credit alarm boxes.
+- **Portable Embedded PostgreSQL 18:** Zero dependencies, no Windows service requirement, dynamic port allocation, ASCII data path.
+- **Manager PIN Guard:** 4-digit PIN authorization on all approved transaction edits and deletions.
 
 **Download the standalone installer below:**`;
 

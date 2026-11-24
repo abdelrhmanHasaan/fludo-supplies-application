@@ -39,11 +39,23 @@ async function getProductStockOverview(client, productId) {
       v.name AS product_name,
       p.kind,
       p.default_sale_price,
-      u.name AS unit_name,
+      COALESCE(p.default_purchase_price, 0) AS default_purchase_price,
+      COALESCE(p.min_stock, 0) AS min_stock,
+      COALESCE(p.unit_name, u.name, 'قطعة') AS unit_name,
       v.qty_on_hand AS physical_stock,
       v.qty_reserved AS reserved_qty,
       v.qty_available AS available_stock,
-      v.qty_incoming AS incoming_qty
+      v.qty_incoming AS incoming_qty,
+      COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'branch_id', soh.branch_id,
+          'branch_name', b.name,
+          'qty_on_hand', soh.qty_on_hand
+        ))
+        FROM app.v_stock_on_hand soh
+        JOIN app.branches b ON b.id = soh.branch_id
+        WHERE soh.product_id = v.product_id AND NOT b.is_deleted
+      ), '[]'::jsonb) AS branch_stocks
     FROM app.v_product_availability v
     JOIN app.products p ON p.id = v.product_id
     LEFT JOIN app.units u ON u.id = p.unit_id

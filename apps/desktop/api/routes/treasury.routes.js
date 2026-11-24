@@ -19,6 +19,8 @@ const treasuryRoutes = async (fastify) => {
           COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'in' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'out' AND NOT is_deleted), 0) +
           COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE to_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE from_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0)
         ) AS balance
@@ -174,6 +176,20 @@ const treasuryRoutes = async (fastify) => {
         FROM app.cash_transfers t
         JOIN app.cash_accounts to_acc ON to_acc.id = t.to_account_id
         WHERE t.from_account_id = $1 AND t.status = 'approved' AND NOT t.is_deleted
+
+        UNION ALL
+
+        -- Manual Movements (إيداع / سحب يدوي)
+        SELECT 
+          cm.movement_date::timestamp with time zone AS occurred_at,
+          (CASE WHEN cm.direction = 'in' THEN 'إيداع نقدي' ELSE 'سحب نقدي' END) AS title,
+          COALESCE(cm.note, CASE WHEN cm.direction = 'in' THEN 'إيداع في الخزينة' ELSE 'سحب من الخزينة' END) AS description,
+          CASE WHEN cm.direction = 'in' THEN cm.amount ELSE 0 END AS amount_in,
+          CASE WHEN cm.direction = 'out' THEN cm.amount ELSE 0 END AS amount_out,
+          cm.id AS document_id,
+          CASE WHEN cm.direction = 'in' THEN 'manual_deposit' ELSE 'manual_withdrawal' END AS move_type
+        FROM app.cash_movements cm
+        WHERE cm.cash_account_id = $1 AND NOT cm.is_deleted
       )
       SELECT *,
         $2 + SUM(amount_in - amount_out) OVER (ORDER BY occurred_at ASC, document_id ASC) AS running_balance
@@ -190,6 +206,24 @@ const treasuryRoutes = async (fastify) => {
                 amount_out: parseFloat(r.amount_out),
                 running_balance: parseFloat(r.running_balance),
             })),
+        };
+    });
+    // 4.5 Record Manual Deposit or Withdrawal (Cash Movement)
+    fastify.post('/movements', async (req, reply) => {
+        const { cash_account_id, direction, amount, note, movement_date } = req.body;
+        if (!cash_account_id || !direction || !amount || parseFloat(amount) <= 0) {
+            return reply.status(400).send({ error: 'الخزينة، الاتجاه (إيداع/سحب)، والمبلغ مطلوبين وقيمتهم صالحة' });
+        }
+        if (!['in', 'out'].includes(direction)) {
+            return reply.status(400).send({ error: 'اتجاه الحركة غير صالح (يجب أن يكون in أو out)' });
+        }
+        const res = await db_js_1.pool.query(`INSERT INTO app.cash_movements (cash_account_id, direction, amount, note, movement_date)
+       VALUES ($1, $2, $3, $4, COALESCE($5::date, CURRENT_DATE))
+       RETURNING *`, [cash_account_id, direction, parseFloat(amount), note?.trim() || null, movement_date || null]);
+        return {
+            status: 'success',
+            movement: res.rows[0],
+            message: direction === 'in' ? 'تم تسجيل الإيداع في الخزينة بنجاح' : 'تم تسجيل السحب من الخزينة بنجاح',
         };
     });
     // 5. Transfer between Cash / Bank / Wallets
@@ -231,6 +265,8 @@ const treasuryRoutes = async (fastify) => {
           COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'in' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'out' AND NOT is_deleted), 0) +
           COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE to_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE from_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0)
         ) AS recorded_balance

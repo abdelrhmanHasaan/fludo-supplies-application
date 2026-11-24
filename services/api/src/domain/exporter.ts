@@ -595,7 +595,7 @@ export async function exportDatabaseToDataWorkbook(client: PoolClient): Promise<
 
   // Add metadata headers
   metaSheet.addRow({ table_name: '__SYSTEM__', row_count: 0, table_hash: 'Fludo Supplies ERP' });
-  metaSheet.addRow({ table_name: '__SCHEMA_VERSION__', row_count: 3, table_hash: '0003_comprehensive_schema_update' });
+  metaSheet.addRow({ table_name: '__SCHEMA_VERSION__', row_count: 4, table_hash: '0004_figjam_overhaul' });
   metaSheet.addRow({ table_name: '__EXPORTED_AT__', row_count: 0, table_hash: new Date().toISOString() });
 
   for (const mr of metaRows) {

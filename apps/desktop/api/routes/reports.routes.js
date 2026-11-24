@@ -17,7 +17,11 @@ const reportsRoutes = async (fastify) => {
           COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'in' AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
-          COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0)
+          COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'in' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'out' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE to_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE from_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0)
         ) AS balance
       FROM app.cash_accounts ca
       WHERE ca.is_active = true AND NOT ca.is_deleted
@@ -29,6 +33,8 @@ const reportsRoutes = async (fastify) => {
             current_liquidity: Number(metrics.current_liquidity || 0),
             current_month_sales: Number(metrics.current_month_sales || 0),
             today_sales: Number(metrics.today_sales || 0),
+            current_month_premises_expenses: Number(metrics.current_month_premises_expenses || 0),
+            current_month_equipment_expenses: Number(metrics.current_month_equipment_expenses || 0),
             active_customers_count: Number(metrics.active_customers_count || 0),
             active_suppliers_count: Number(metrics.active_suppliers_count || 0),
             active_employees_count: Number(metrics.active_employees_count || 0),

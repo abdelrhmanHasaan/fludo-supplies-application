@@ -141347,23 +141347,47 @@ async function performPartyNetting(client, partyId, amount, notes) {
 
 // src/routes/parties.routes.ts
 var partiesRoutes = async (fastify2) => {
+  fastify2.get("/alarms", async (req, reply) => {
+    const { is_customer, is_supplier } = req.query;
+    let q = "SELECT * FROM app.v_party_alarms WHERE 1=1";
+    const params = [];
+    if (is_customer !== void 0) {
+      params.push(is_customer === "true");
+      q += ` AND is_customer = $${params.length}`;
+    }
+    if (is_supplier !== void 0) {
+      params.push(is_supplier === "true");
+      q += ` AND is_supplier = $${params.length}`;
+    }
+    q += " ORDER BY countdown_days ASC, party_name ASC";
+    const res = await pool.query(q, params);
+    return res.rows;
+  });
   fastify2.get("/", async (req, reply) => {
     const { is_customer, is_supplier, search } = req.query;
     let query = `
       SELECT 
         p.id,
+        COALESCE(p.code, s.party_code, '') AS code,
         p.name,
         p.phone,
         p.address,
         p.is_customer,
         p.is_supplier,
         p.notes,
-        COALESCE(SUM(CASE WHEN a.system_role = 'receivable' THEN (l.debit - l.credit) ELSE 0 END), 0) AS customer_balance,
-        COALESCE(SUM(CASE WHEN a.system_role = 'payable' THEN (l.credit - l.debit) ELSE 0 END), 0) AS supplier_balance,
+        p.settlement_due_date,
+        (p.settlement_due_date - CURRENT_DATE)::integer AS countdown_days,
+        COALESCE(s.net_balance, 0)::numeric(16,2) AS net_balance,
+        COALESCE(s.balance_type, '\u062E\u0627\u0644\u0635') AS balance_type,
+        COALESCE(s.total_purchases, 0)::numeric(16,2) AS total_purchases,
+        COALESCE(s.total_payments, 0)::numeric(16,2) AS total_payments,
+        COALESCE(s.reserved_undelivered, 0)::numeric(16,3) AS reserved_undelivered,
+        -- Backward-compatibility aliases
+        COALESCE(s.net_balance, 0)::numeric(16,2) AS customer_balance,
+        COALESCE(s.net_balance, 0)::numeric(16,2) AS supplier_balance,
         TO_CHAR(p.created_at, 'YYYY-MM-DD') AS created_at
       FROM app.parties p
-      LEFT JOIN app.journal_lines l ON l.party_id = p.id
-      LEFT JOIN app.accounts a ON a.id = l.account_id
+      LEFT JOIN app.v_party_summary s ON s.party_id = p.id
       WHERE NOT p.is_deleted
     `;
     const params = [];
@@ -141377,32 +141401,37 @@ var partiesRoutes = async (fastify2) => {
       params.push(is_supplier === "true");
     }
     if (search) {
-      query += ` AND (p.name ILIKE $${pIdx} OR p.phone ILIKE $${pIdx})`;
+      query += ` AND (p.name ILIKE $${pIdx} OR p.phone ILIKE $${pIdx} OR p.code ILIKE $${pIdx})`;
       params.push(`%${search}%`);
       pIdx++;
     }
-    query += ` GROUP BY p.id ORDER BY p.name`;
+    query += ` ORDER BY p.created_at DESC, p.name ASC`;
     const res = await pool.query(query, params);
     return res.rows.map((r) => ({
       ...r,
+      net_balance: parseFloat(r.net_balance),
       customer_balance: parseFloat(r.customer_balance),
-      supplier_balance: parseFloat(r.supplier_balance)
+      supplier_balance: parseFloat(r.supplier_balance),
+      total_purchases: parseFloat(r.total_purchases),
+      total_payments: parseFloat(r.total_payments),
+      reserved_undelivered: parseFloat(r.reserved_undelivered)
     }));
   });
   fastify2.post("/", async (req, reply) => {
-    const { name, phone, address, is_customer, is_supplier, notes } = req.body;
-    if (!name) return reply.status(400).send({ error: "\u0627\u0633\u0645 \u0627\u0644\u0637\u0631\u0641 \u0645\u0637\u0644\u0648\u0628" });
+    const { name, phone, address, is_customer, is_supplier, notes, settlement_due_date } = req.body;
+    if (!name || !name.trim()) return reply.status(400).send({ error: "\u0627\u0633\u0645 \u0627\u0644\u0637\u0631\u0641 \u0645\u0637\u0644\u0648\u0628" });
     const res = await pool.query(
-      `INSERT INTO app.parties (name, phone, address, is_customer, is_supplier, notes)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO app.parties (name, phone, address, is_customer, is_supplier, notes, settlement_due_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
-        name,
-        phone || null,
-        address || null,
+        name.trim(),
+        phone?.trim() || null,
+        address?.trim() || null,
         is_customer ?? true,
         is_supplier ?? false,
-        notes || null
+        notes?.trim() || null,
+        settlement_due_date || null
       ]
     );
     return res.rows[0];
@@ -141460,6 +141489,14 @@ var partiesRoutes = async (fastify2) => {
       LEFT JOIN app.equipment eq ON eq.id = sh.vehicle_id
       WHERE si.party_id = $1 AND NOT sh.is_deleted AND NOT si.is_deleted
       ORDER BY sh.departed_at DESC NULLS LAST, sh.created_at DESC`,
+      [id]
+    );
+    return res.rows;
+  });
+  fastify2.get("/:id/reservations", async (req, reply) => {
+    const { id } = req.params;
+    const res = await pool.query(
+      `SELECT * FROM app.v_reservation_lines WHERE party_id = $1 ORDER BY created_at DESC`,
       [id]
     );
     return res.rows;
@@ -141592,11 +141629,23 @@ async function getProductStockOverview(client, productId) {
       v.name AS product_name,
       p.kind,
       p.default_sale_price,
-      u.name AS unit_name,
+      COALESCE(p.default_purchase_price, 0) AS default_purchase_price,
+      COALESCE(p.min_stock, 0) AS min_stock,
+      COALESCE(p.unit_name, u.name, '\u0642\u0637\u0639\u0629') AS unit_name,
       v.qty_on_hand AS physical_stock,
       v.qty_reserved AS reserved_qty,
       v.qty_available AS available_stock,
-      v.qty_incoming AS incoming_qty
+      v.qty_incoming AS incoming_qty,
+      COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'branch_id', soh.branch_id,
+          'branch_name', b.name,
+          'qty_on_hand', soh.qty_on_hand
+        ))
+        FROM app.v_stock_on_hand soh
+        JOIN app.branches b ON b.id = soh.branch_id
+        WHERE soh.product_id = v.product_id AND NOT b.is_deleted
+      ), '[]'::jsonb) AS branch_stocks
     FROM app.v_product_availability v
     JOIN app.products p ON p.id = v.product_id
     LEFT JOIN app.units u ON u.id = p.unit_id
@@ -141619,6 +141668,8 @@ var productsRoutes = async (fastify2) => {
     return products.map((p) => ({
       ...p,
       default_sale_price: parseFloat(p.default_sale_price),
+      default_purchase_price: parseFloat(p.default_purchase_price || 0),
+      min_stock: parseFloat(p.min_stock || 0),
       physical_stock: parseFloat(p.physical_stock),
       reserved_qty: parseFloat(p.reserved_qty),
       available_stock: parseFloat(p.available_stock),
@@ -141633,11 +141684,29 @@ var productsRoutes = async (fastify2) => {
     const { code, name, kind, unit_name, unit_id, default_sale_price, default_purchase_price, min_stock } = req.body;
     if (!name || !name.trim()) return reply.status(400).send({ error: "\u0627\u0633\u0645 \u0627\u0644\u0635\u0646\u0641 \u0645\u0637\u0644\u0648\u0628" });
     try {
+      let finalCode = code?.trim() || null;
+      if (!finalCode) {
+        const maxRes = await pool.query(
+          `SELECT COALESCE(MAX(SUBSTRING(code FROM '^P([0-9]+)$')::integer), 0) + 1 AS next_num 
+           FROM app.products 
+           WHERE code ~ '^P[0-9]+$'`
+        );
+        const nextNum = maxRes.rows[0].next_num || 1;
+        finalCode = `P${String(nextNum).padStart(4, "0")}`;
+      }
+      if (unit_name && unit_name.trim()) {
+        await pool.query(
+          `INSERT INTO app.units (name)
+           SELECT trim($1)
+           WHERE NOT EXISTS (SELECT 1 FROM app.units WHERE lower(name) = lower(trim($1)) AND NOT is_deleted)`,
+          [unit_name.trim()]
+        );
+      }
       const res = await pool.query(
         `INSERT INTO app.products (
           code, name, kind, unit_name, unit_id, default_sale_price, default_purchase_price, min_stock
         ) VALUES (
-          NULLIF(trim($1), ''),
+          $1,
           trim($2),
           $3,
           NULLIF(trim($4), ''),
@@ -141648,7 +141717,7 @@ var productsRoutes = async (fastify2) => {
         )
         RETURNING *`,
         [
-          code || null,
+          finalCode,
           name,
           kind || "goods",
           unit_name || null,
@@ -141665,8 +141734,32 @@ var productsRoutes = async (fastify2) => {
   });
   fastify2.put("/:id", async (req, reply) => {
     const { id } = req.params;
-    const { name, unit_name, default_sale_price, default_purchase_price, min_stock } = req.body;
+    const { name, unit_name, default_sale_price, default_purchase_price, min_stock, pin } = req.body;
+    if (pin) {
+      const managerRes = await pool.query(
+        `SELECT u.id, u.manager_pin_hash 
+         FROM app.users u 
+         JOIN app.roles r ON r.id = u.role_id 
+         WHERE r.code = 'admin' AND u.manager_pin_hash IS NOT NULL AND u.is_active 
+         LIMIT 1`
+      );
+      if (managerRes.rows.length === 0) {
+        return reply.status(403).send({ error: "\u0644\u0645 \u064A\u062A\u0645 \u062A\u0639\u064A\u064A\u0646 \u0631\u0645\u0632 \u0623\u0645\u0627\u0646 \u0644\u0644\u0645\u062F\u064A\u0631 \u0641\u064A \u0627\u0644\u0646\u0638\u0627\u0645" });
+      }
+      const isPinValid = await verifySecret(pin.toString().trim(), managerRes.rows[0].manager_pin_hash);
+      if (!isPinValid) {
+        return reply.status(403).send({ error: "\u0631\u0645\u0632 \u0627\u0644\u0623\u0645\u0627\u0646 (PIN) \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
+      }
+    }
     try {
+      if (unit_name && unit_name.trim()) {
+        await pool.query(
+          `INSERT INTO app.units (name)
+           SELECT trim($1)
+           WHERE NOT EXISTS (SELECT 1 FROM app.units WHERE lower(name) = lower(trim($1)) AND NOT is_deleted)`,
+          [unit_name.trim()]
+        );
+      }
       const res = await pool.query(
         `UPDATE app.products
          SET name = COALESCE(NULLIF(trim($1), ''), name),
@@ -141684,6 +141777,33 @@ var productsRoutes = async (fastify2) => {
     } catch (err) {
       return reply.status(400).send({ error: err.message });
     }
+  });
+  fastify2.delete("/:id", async (req, reply) => {
+    const { id } = req.params;
+    const { pin } = req.query || {};
+    if (!pin) {
+      return reply.status(403).send({ error: "\u062D\u0630\u0641 \u0627\u0644\u0635\u0646\u0641 \u064A\u062A\u0637\u0644\u0628 \u0625\u062F\u062E\u0627\u0644 \u0631\u0645\u0632 \u0627\u0644\u0623\u0645\u0627\u0646 (PIN)" });
+    }
+    const managerRes = await pool.query(
+      `SELECT u.id, u.manager_pin_hash 
+       FROM app.users u 
+       JOIN app.roles r ON r.id = u.role_id 
+       WHERE r.code = 'admin' AND u.manager_pin_hash IS NOT NULL AND u.is_active 
+       LIMIT 1`
+    );
+    if (managerRes.rows.length === 0) {
+      return reply.status(403).send({ error: "\u0644\u0645 \u064A\u062A\u0645 \u062A\u0639\u064A\u064A\u0646 \u0631\u0645\u0632 \u0623\u0645\u0627\u0646 \u0644\u0644\u0645\u062F\u064A\u0631 \u0641\u064A \u0627\u0644\u0646\u0638\u0627\u0645" });
+    }
+    const isPinValid = await verifySecret(pin.toString().trim(), managerRes.rows[0].manager_pin_hash);
+    if (!isPinValid) {
+      return reply.status(403).send({ error: "\u0631\u0645\u0632 \u0627\u0644\u0623\u0645\u0627\u0646 (PIN) \u063A\u064A\u0631 \u0635\u062D\u064A\u062D" });
+    }
+    const moves = await pool.query(`SELECT id FROM app.stock_movements WHERE product_id = $1 LIMIT 1`, [id]);
+    if (moves.rows.length > 0) {
+      return reply.status(400).send({ error: "\u0644\u0627 \u064A\u0645\u0643\u0646 \u062D\u0630\u0641 \u0647\u0630\u0627 \u0627\u0644\u0635\u0646\u0641 \u0644\u0648\u062C\u0648\u062F \u062D\u0631\u0643\u0627\u062A \u0645\u062E\u0632\u0646\u064A\u0629 \u0645\u0633\u062C\u0644\u0629 \u0639\u0644\u064A\u0647" });
+    }
+    await pool.query(`UPDATE app.products SET is_deleted = true, updated_at = now() WHERE id = $1`, [id]);
+    return { status: "success", message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0635\u0646\u0641 \u0628\u0646\u062C\u0627\u062D" };
   });
 };
 
@@ -141835,12 +141955,13 @@ async function createSalesInvoice(client, params) {
   if (!branchId) throw new Error("\u0644\u0627 \u064A\u0648\u062C\u062F \u0641\u0631\u0639 \u0646\u0634\u0637 \u0644\u0631\u0628\u0637 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0628\u0647");
   const handlingFee = params.handlingFee || 0;
   const discountAmount = params.discountAmount || 0;
+  const locType = params.locationType === "party" || params.locationType === "party_place" ? "party_place" : "site";
   const invRes = await client.query(
     `INSERT INTO app.sales_invoices (
       invoice_no, party_id, branch_id, invoice_date, status,
       handling_fee, discount_amount, previous_balance_snapshot,
-      notes
-    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8)
+      notes, location_type, site_id, place_party_id
+    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11)
     RETURNING id`,
     [
       invoiceNumber,
@@ -141850,7 +141971,10 @@ async function createSalesInvoice(client, params) {
       handlingFee,
       discountAmount,
       previousBalance,
-      params.notes || null
+      params.notes || null,
+      locType,
+      params.siteId || branchId,
+      params.placePartyId || null
     ]
   );
   const invoiceId = invRes.rows[0].id;
@@ -141867,8 +141991,8 @@ async function createSalesInvoice(client, params) {
     await client.query(
       `INSERT INTO app.sales_invoice_lines (
         invoice_id, line_no, product_id, unit_id, unit_name, qty, unit_price,
-        discount_amount, catalog_price_snapshot, order_line_id, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        discount_amount, catalog_price_snapshot, order_line_id, notes, line_mode
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         invoiceId,
         lineNo++,
@@ -141880,7 +142004,8 @@ async function createSalesInvoice(client, params) {
         lineDiscount,
         catalogPrice,
         line.orderLineId || null,
-        line.notes || null
+        line.notes || null,
+        line.lineMode || "on_account"
       ]
     );
   }
@@ -141918,7 +142043,7 @@ async function approveSalesInvoice(client, invoiceId, approvedBy, amountPaidNow 
     [invoiceId]
   );
   for (const line of linesRes.rows) {
-    if (line.kind === "goods") {
+    if (line.kind === "goods" && line.line_mode !== "reserve") {
       await recordStockMovement(client, {
         productId: line.product_id,
         movementType: "sale_issue",
@@ -142087,40 +142212,71 @@ async function createPurchaseInvoice(client, params) {
   );
   const branchId = branchRes.rows[0]?.id;
   if (!branchId) throw new Error("\u0644\u0627 \u064A\u0648\u062C\u062F \u0641\u0631\u0639 \u0646\u0634\u0637 \u0644\u0631\u0628\u0637 \u0625\u0630\u0646 \u0627\u0644\u0627\u0633\u062A\u0644\u0627\u0645 \u0628\u0647");
+  const handlingFee = params.handlingFee || 0;
+  const discountAmount = params.discountAmount || 0;
+  const locType = params.locationType === "party" || params.locationType === "party_place" ? "party_place" : "site";
   const invRes = await client.query(
     `INSERT INTO app.purchase_invoices (
-      invoice_no, party_id, branch_id, invoice_date, status, notes
-    ) VALUES ($1, $2, $3, $4, 'draft', $5)
+      invoice_no, party_id, branch_id, invoice_date, status, notes,
+      handling_fee, discount_amount, location_type, site_id, place_party_id
+    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10)
     RETURNING id`,
-    [invoiceNumber, params.partyId, branchId, params.invoiceDate, params.notes || null]
+    [
+      invoiceNumber,
+      params.partyId,
+      branchId,
+      params.invoiceDate,
+      params.notes || null,
+      handlingFee,
+      discountAmount,
+      locType,
+      params.siteId || branchId,
+      params.placePartyId || null
+    ]
   );
   const invoiceId = invRes.rows[0].id;
   let lineNo = 1;
-  let totalAmount = 0;
+  let totalLinesAmount = 0;
   for (const line of params.lines) {
     const prodRes = await client.query(
-      "SELECT default_sale_price, unit_id FROM app.products WHERE id = $1",
+      "SELECT default_sale_price, unit_id, unit_name FROM app.products WHERE id = $1",
       [line.productId]
     );
     const unitId = prodRes.rows[0]?.unit_id || null;
-    const lineTotal = Math.round(line.qty * line.unitPrice * 100) / 100;
-    totalAmount += lineTotal;
+    const unitName = (line.unitName || prodRes.rows[0]?.unit_name || "").trim() || null;
+    const lineDiscount = line.discountAmount || 0;
+    const lineTotal = Math.round((line.qty * line.unitPrice - lineDiscount) * 100) / 100;
+    totalLinesAmount += lineTotal;
     await client.query(
       `INSERT INTO app.purchase_invoice_lines (
-        invoice_id, line_no, product_id, unit_id, qty, unit_price, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [invoiceId, lineNo++, line.productId, unitId, line.qty, line.unitPrice, line.notes || null]
+        invoice_id, line_no, product_id, unit_id, unit_name, qty, unit_price, discount_amount, notes, line_mode
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        invoiceId,
+        lineNo++,
+        line.productId,
+        unitId,
+        unitName,
+        line.qty,
+        line.unitPrice,
+        lineDiscount,
+        line.notes || null,
+        line.lineMode || "on_account"
+      ]
     );
-    await recordStockMovement(client, {
-      productId: line.productId,
-      movementType: "purchase_receipt",
-      quantity: line.qty,
-      unitCost: line.unitPrice,
-      sourceType: "purchase_invoice",
-      sourceId: invoiceId,
-      notes: `\u0625\u0630\u0646 \u0627\u0633\u062A\u0644\u0627\u0645 \u0645\u0648\u0631\u062F ${invoiceNumber}`
-    });
+    if (line.lineMode !== "reserve") {
+      await recordStockMovement(client, {
+        productId: line.productId,
+        movementType: "purchase_receipt",
+        quantity: line.qty,
+        unitCost: line.unitPrice,
+        sourceType: "purchase_invoice",
+        sourceId: invoiceId,
+        notes: `\u0625\u0630\u0646 \u0627\u0633\u062A\u0644\u0627\u0645 \u0645\u0648\u0631\u062F ${invoiceNumber}`
+      });
+    }
   }
+  const netPayable = totalLinesAmount + handlingFee - discountAmount;
   const journalId = await postJournalEntry(client, {
     entryDate: params.invoiceDate,
     sourceDocType: "purchase_invoice",
@@ -142130,7 +142286,7 @@ async function createPurchaseInvoice(client, params) {
       {
         accountCode: "1200",
         // Inventory (المخزون)
-        debit: totalAmount,
+        debit: totalLinesAmount,
         credit: 0,
         description: `\u062A\u0648\u0631\u064A\u062F \u0628\u0636\u0627\u0639\u0629 \u0625\u0630\u0646 \u0627\u0633\u062A\u0644\u0627\u0645 ${invoiceNumber}`
       },
@@ -142139,7 +142295,7 @@ async function createPurchaseInvoice(client, params) {
         // Payable (الموردون)
         partyId: params.partyId,
         debit: 0,
-        credit: totalAmount,
+        credit: netPayable,
         description: `\u0627\u0633\u062A\u062D\u0642\u0627\u0642 \u0645\u0648\u0631\u062F \u0625\u0630\u0646 \u0627\u0633\u062A\u0644\u0627\u0645 ${invoiceNumber}`
       }
     ]
@@ -142148,6 +142304,56 @@ async function createPurchaseInvoice(client, params) {
     "UPDATE app.purchase_invoices SET status = 'approved', journal_entry_id = $1, approved_at = now() WHERE id = $2",
     [journalId, invoiceId]
   );
+  const amountPaidNow = Number(params.amountPaidNow || 0);
+  if (amountPaidNow > 0 && params.cashAccountId) {
+    const nextPayRes = await client.query("SELECT app.next_doc_number('payment_out') AS num");
+    const payNumber = nextPayRes.rows[0].num;
+    const payJournalId = await postJournalEntry(client, {
+      entryDate: params.invoiceDate,
+      sourceDocType: "payment",
+      sourceDocId: invoiceId,
+      narration: `\u0633\u062F\u0627\u062F \u0646\u0642\u062F\u064A \u0645\u0639 \u0641\u0627\u062A\u0648\u0631\u0629 \u0634\u0631\u0627\u0621 ${invoiceNumber}`,
+      lines: [
+        {
+          accountCode: "2100",
+          // Payable (الموردون)
+          partyId: params.partyId,
+          debit: amountPaidNow,
+          credit: 0,
+          description: `\u0633\u062F\u0627\u062F \u0644\u0644\u0645\u0648\u0631\u062F \u0645\u0639 \u0641\u0627\u062A\u0648\u0631\u0629 \u0634\u0631\u0627\u0621 ${invoiceNumber}`
+        },
+        {
+          accountCode: "1010",
+          // Cash
+          debit: 0,
+          credit: amountPaidNow,
+          description: `\u0635\u0631\u0641 \u0646\u0642\u062F\u064A \u0645\u0646 \u0627\u0644\u062E\u0632\u064A\u0646\u0629 \u0644\u0641\u0627\u062A\u0648\u0631\u0629 ${invoiceNumber}`
+        }
+      ]
+    });
+    const payRes = await client.query(
+      `INSERT INTO app.payments (
+        payment_no, direction, party_id, cash_account_id, payment_date, amount,
+        journal_entry_id, notes, status
+      ) VALUES ($1, 'out', $2, $3, $4, $5, $6, $7, 'approved')
+      RETURNING id`,
+      [
+        payNumber,
+        params.partyId,
+        params.cashAccountId,
+        params.invoiceDate,
+        amountPaidNow,
+        payJournalId,
+        `\u0633\u062F\u0627\u062F \u0645\u0639 \u0641\u0627\u062A\u0648\u0631\u0629 \u0634\u0631\u0627\u0621 ${invoiceNumber}`
+      ]
+    );
+    const paymentId = payRes.rows[0].id;
+    await client.query(
+      `INSERT INTO app.payment_allocations (payment_id, purchase_invoice_id, amount)
+       VALUES ($1, $2, $3)`,
+      [paymentId, invoiceId, amountPaidNow]
+    );
+  }
   return invoiceId;
 }
 
@@ -142381,6 +142587,9 @@ var invoicesRoutes = async (fastify2) => {
         driverId: body.driverId,
         vehicleId: body.vehicleId,
         destination: body.destination,
+        locationType: body.locationType,
+        siteId: body.siteId,
+        placePartyId: body.placePartyId,
         notes: body.notes,
         lines: body.lines
       });
@@ -142444,11 +142653,32 @@ var invoicesRoutes = async (fastify2) => {
       return await createPurchaseInvoice(client, {
         partyId: body.partyId,
         invoiceDate: body.invoiceDate || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+        handlingFee: body.handlingFee || 0,
+        discountAmount: body.discountAmount || 0,
+        amountPaidNow: body.amountPaidNow || 0,
+        cashAccountId: body.cashAccountId,
+        locationType: body.locationType,
+        siteId: body.siteId,
+        placePartyId: body.placePartyId,
         notes: body.notes,
         lines: body.lines
       });
     });
     return { status: "created", invoiceId };
+  });
+  fastify2.post("/print-log", async (req, reply) => {
+    const { invoice_id, invoice_kind, mode, carried_balance_snapshot } = req.body;
+    if (!invoice_id) {
+      return reply.status(400).send({ error: "\u0645\u0639\u0631\u0641 \u0627\u0644\u0641\u0627\u062A\u0648\u0631\u0629 \u0645\u0637\u0644\u0648\u0628" });
+    }
+    const normalizedKind = invoice_kind === "purchase" ? "purchase" : "sale";
+    const res = await pool.query(
+      `INSERT INTO app.invoice_prints (invoice_id, invoice_kind, mode, carried_balance_snapshot)
+       VALUES ($1, $2, COALESCE($3, 'plain'), COALESCE($4, 0))
+       RETURNING *`,
+      [invoice_id, normalizedKind, mode || "plain", carried_balance_snapshot || 0]
+    );
+    return { status: "success", log: res.rows[0] };
   });
 };
 
@@ -142668,6 +142898,8 @@ var treasuryRoutes = async (fastify2) => {
           COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'in' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'out' AND NOT is_deleted), 0) +
           COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE to_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE from_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0)
         ) AS balance
@@ -142831,6 +143063,20 @@ var treasuryRoutes = async (fastify2) => {
         FROM app.cash_transfers t
         JOIN app.cash_accounts to_acc ON to_acc.id = t.to_account_id
         WHERE t.from_account_id = $1 AND t.status = 'approved' AND NOT t.is_deleted
+
+        UNION ALL
+
+        -- Manual Movements (\u0625\u064A\u062F\u0627\u0639 / \u0633\u062D\u0628 \u064A\u062F\u0648\u064A)
+        SELECT 
+          cm.movement_date::timestamp with time zone AS occurred_at,
+          (CASE WHEN cm.direction = 'in' THEN '\u0625\u064A\u062F\u0627\u0639 \u0646\u0642\u062F\u064A' ELSE '\u0633\u062D\u0628 \u0646\u0642\u062F\u064A' END) AS title,
+          COALESCE(cm.note, CASE WHEN cm.direction = 'in' THEN '\u0625\u064A\u062F\u0627\u0639 \u0641\u064A \u0627\u0644\u062E\u0632\u064A\u0646\u0629' ELSE '\u0633\u062D\u0628 \u0645\u0646 \u0627\u0644\u062E\u0632\u064A\u0646\u0629' END) AS description,
+          CASE WHEN cm.direction = 'in' THEN cm.amount ELSE 0 END AS amount_in,
+          CASE WHEN cm.direction = 'out' THEN cm.amount ELSE 0 END AS amount_out,
+          cm.id AS document_id,
+          CASE WHEN cm.direction = 'in' THEN 'manual_deposit' ELSE 'manual_withdrawal' END AS move_type
+        FROM app.cash_movements cm
+        WHERE cm.cash_account_id = $1 AND NOT cm.is_deleted
       )
       SELECT *,
         $2 + SUM(amount_in - amount_out) OVER (ORDER BY occurred_at ASC, document_id ASC) AS running_balance
@@ -142849,6 +143095,26 @@ var treasuryRoutes = async (fastify2) => {
         amount_out: parseFloat(r.amount_out),
         running_balance: parseFloat(r.running_balance)
       }))
+    };
+  });
+  fastify2.post("/movements", async (req, reply) => {
+    const { cash_account_id, direction, amount, note, movement_date } = req.body;
+    if (!cash_account_id || !direction || !amount || parseFloat(amount) <= 0) {
+      return reply.status(400).send({ error: "\u0627\u0644\u062E\u0632\u064A\u0646\u0629\u060C \u0627\u0644\u0627\u062A\u062C\u0627\u0647 (\u0625\u064A\u062F\u0627\u0639/\u0633\u062D\u0628)\u060C \u0648\u0627\u0644\u0645\u0628\u0644\u063A \u0645\u0637\u0644\u0648\u0628\u064A\u0646 \u0648\u0642\u064A\u0645\u062A\u0647\u0645 \u0635\u0627\u0644\u062D\u0629" });
+    }
+    if (!["in", "out"].includes(direction)) {
+      return reply.status(400).send({ error: "\u0627\u062A\u062C\u0627\u0647 \u0627\u0644\u062D\u0631\u0643\u0629 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D (\u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 in \u0623\u0648 out)" });
+    }
+    const res = await pool.query(
+      `INSERT INTO app.cash_movements (cash_account_id, direction, amount, note, movement_date)
+       VALUES ($1, $2, $3, $4, COALESCE($5::date, CURRENT_DATE))
+       RETURNING *`,
+      [cash_account_id, direction, parseFloat(amount), note?.trim() || null, movement_date || null]
+    );
+    return {
+      status: "success",
+      movement: res.rows[0],
+      message: direction === "in" ? "\u062A\u0645 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u0625\u064A\u062F\u0627\u0639 \u0641\u064A \u0627\u0644\u062E\u0632\u064A\u0646\u0629 \u0628\u0646\u062C\u0627\u062D" : "\u062A\u0645 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u0633\u062D\u0628 \u0645\u0646 \u0627\u0644\u062E\u0632\u064A\u0646\u0629 \u0628\u0646\u062C\u0627\u062D"
     };
   });
   fastify2.post("/transfer", async (req, reply) => {
@@ -142890,6 +143156,8 @@ var treasuryRoutes = async (fastify2) => {
           COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'in' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'out' AND NOT is_deleted), 0) +
           COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE to_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE from_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0)
         ) AS recorded_balance
@@ -143357,7 +143625,11 @@ var reportsRoutes = async (fastify2) => {
           COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'in' AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.payments WHERE cash_account_id = ca.id AND direction = 'out' AND status = 'approved' AND NOT is_deleted), 0) -
           COALESCE((SELECT SUM(amount) FROM app.expenses WHERE cash_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
-          COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0)
+          COALESCE((SELECT SUM(amount) FROM app.employee_transactions WHERE cash_account_id = ca.id AND tx_type = 'advance' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'in' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_movements WHERE cash_account_id = ca.id AND direction = 'out' AND NOT is_deleted), 0) +
+          COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE to_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0) -
+          COALESCE((SELECT SUM(amount) FROM app.cash_transfers WHERE from_account_id = ca.id AND status = 'approved' AND NOT is_deleted), 0)
         ) AS balance
       FROM app.cash_accounts ca
       WHERE ca.is_active = true AND NOT ca.is_deleted
@@ -143369,6 +143641,8 @@ var reportsRoutes = async (fastify2) => {
       current_liquidity: Number(metrics.current_liquidity || 0),
       current_month_sales: Number(metrics.current_month_sales || 0),
       today_sales: Number(metrics.today_sales || 0),
+      current_month_premises_expenses: Number(metrics.current_month_premises_expenses || 0),
+      current_month_equipment_expenses: Number(metrics.current_month_equipment_expenses || 0),
       active_customers_count: Number(metrics.active_customers_count || 0),
       active_suppliers_count: Number(metrics.active_suppliers_count || 0),
       active_employees_count: Number(metrics.active_employees_count || 0),
@@ -144481,7 +144755,7 @@ async function exportDatabaseToDataWorkbook(client) {
   metaSheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   metaSheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
   metaSheet.addRow({ table_name: "__SYSTEM__", row_count: 0, table_hash: "Fludo Supplies ERP" });
-  metaSheet.addRow({ table_name: "__SCHEMA_VERSION__", row_count: 3, table_hash: "0003_comprehensive_schema_update" });
+  metaSheet.addRow({ table_name: "__SCHEMA_VERSION__", row_count: 4, table_hash: "0004_figjam_overhaul" });
   metaSheet.addRow({ table_name: "__EXPORTED_AT__", row_count: 0, table_hash: (/* @__PURE__ */ new Date()).toISOString() });
   for (const mr of metaRows) {
     metaSheet.addRow(mr);
@@ -144660,7 +144934,7 @@ var companyRoutes = async (fastify2) => {
     if (res.rows.length === 0) {
       return {
         name_ar: "Fludo Supplies",
-        name_en: "AL REDA SUPPLIES CO.",
+        name_en: "Fludo Supplies ERP",
         tagline: "\u0645\u0648\u0627\u062F \u0627\u0644\u0628\u0646\u0627\u0621 \u0648\u0627\u0644\u062A\u0648\u0631\u064A\u062F\u0627\u062A \u0627\u0644\u0639\u0627\u0645\u0629",
         address: "\u0643\u0631\u062F\u0627\u0633\u0629 \u2014 \u0627\u0644\u062C\u064A\u0632\u0629",
         phones: "01030343576",
@@ -145003,6 +145277,70 @@ var companyRoutes = async (fastify2) => {
     } catch (err) {
       return reply.status(500).send({ error: err.message || "\u0641\u0634\u0644 \u062A\u0635\u0641\u064A\u0631 \u0627\u0644\u0646\u0638\u0627\u0645" });
     }
+  });
+  fastify2.get("/branches", async (req, reply) => {
+    const res = await pool.query(`
+      SELECT id, code, name, address, is_active, created_at, updated_at
+      FROM app.branches
+      WHERE is_deleted = false
+      ORDER BY created_at ASC
+    `);
+    return res.rows;
+  });
+  fastify2.post("/branches", async (req, reply) => {
+    const { name, address, code } = req.body;
+    if (!name || !name.trim()) {
+      return reply.status(400).send({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0642\u0639 / \u0627\u0644\u0645\u0642\u0631 \u0645\u0637\u0644\u0648\u0628" });
+    }
+    const branchCode = code?.trim() || `BR${Date.now().toString().slice(-4)}`;
+    const res = await pool.query(
+      `INSERT INTO app.branches (name, address, code, is_active)
+       VALUES ($1, $2, $3, true)
+       RETURNING *`,
+      [name.trim(), address?.trim() || null, branchCode]
+    );
+    return {
+      status: "success",
+      branch: res.rows[0],
+      message: "\u062A\u0645 \u0625\u0636\u0627\u0641\u0629 \u0645\u0648\u0642\u0639 \u0627\u0644\u0646\u0634\u0627\u0637 \u0628\u0646\u062C\u0627\u062D"
+    };
+  });
+  fastify2.put("/branches/:id", async (req, reply) => {
+    const { id } = req.params;
+    const { name, address, is_active } = req.body;
+    if (!name || !name.trim()) {
+      return reply.status(400).send({ error: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0648\u0642\u0639 / \u0627\u0644\u0645\u0642\u0631 \u0645\u0637\u0644\u0648\u0628" });
+    }
+    const res = await pool.query(
+      `UPDATE app.branches
+       SET name = $1, address = COALESCE($2, address), is_active = COALESCE($3, is_active), updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+      [name.trim(), address?.trim() || null, is_active, id]
+    );
+    if (res.rows.length === 0) {
+      return reply.status(404).send({ error: "\u0627\u0644\u0645\u0648\u0642\u0639 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F" });
+    }
+    return {
+      status: "success",
+      branch: res.rows[0],
+      message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0645\u0648\u0642\u0639 \u0627\u0644\u0646\u0634\u0627\u0637 \u0628\u0646\u062C\u0627\u062D"
+    };
+  });
+  fastify2.delete("/branches/:id", async (req, reply) => {
+    const { id } = req.params;
+    const countRes = await pool.query("SELECT count(*) FROM app.branches WHERE is_deleted = false AND is_active = true");
+    if (parseInt(countRes.rows[0].count, 10) <= 1) {
+      return reply.status(400).send({ error: "\u0644\u0627 \u064A\u0645\u0643\u0646 \u062D\u0630\u0641 \u0627\u0644\u0645\u0642\u0631 \u0627\u0644\u0648\u062D\u064A\u062F\u060C \u064A\u062C\u0628 \u0623\u0646 \u064A\u062D\u062A\u0648\u064A \u0627\u0644\u0646\u0638\u0627\u0645 \u0639\u0644\u0649 \u0645\u0648\u0642\u0639 \u0646\u0634\u0627\u0637 \u0648\u0627\u062D\u062F \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644" });
+    }
+    await pool.query(
+      `UPDATE app.branches SET is_deleted = true, is_active = false, deleted_at = NOW() WHERE id = $1`,
+      [id]
+    );
+    return {
+      status: "success",
+      message: "\u062A\u0645 \u062D\u0630\u0641 \u0645\u0648\u0642\u0639 \u0627\u0644\u0646\u0634\u0627\u0637 \u0628\u0646\u062C\u0627\u062D"
+    };
   });
 };
 
@@ -145467,6 +145805,27 @@ async function autoEnsureSchema() {
         console.log("[API] 0003 migration applied successfully!");
       }
     }
+    const m4Check = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_schema = 'app' AND table_name = 'cash_movements'
+      ) AS exists;
+    `).catch(() => ({ rows: [{ exists: false }] }));
+    if (!m4Check.rows[0]?.exists) {
+      console.log("[API] Applying 0004_figjam_overhaul.sql migration...");
+      const migration4Paths = [
+        path2.join(__dirname, "0004_figjam_overhaul.sql"),
+        path2.join(__dirname, "..", "0004_figjam_overhaul.sql"),
+        path2.resolve(process.cwd(), "db/migrations/0004_figjam_overhaul.sql"),
+        path2.resolve(process.cwd(), "../../db/migrations/0004_figjam_overhaul.sql"),
+        path2.join(process.cwd(), "0004_figjam_overhaul.sql")
+      ];
+      const sql4Path = migration4Paths.find((p) => fs2.existsSync(p));
+      if (sql4Path) {
+        const sql = fs2.readFileSync(sql4Path, "utf8");
+        await pool.query(sql);
+        console.log("[API] 0004 migration applied successfully!");
+      }
+    }
   } catch (err) {
     console.warn("[API] autoEnsureSchema check notice:", err);
   }
@@ -145527,7 +145886,7 @@ async function start() {
   });
   const healthHandler = async () => ({
     status: "healthy",
-    version: "1.5.0",
+    version: "1.6.0",
     time: (/* @__PURE__ */ new Date()).toISOString()
   });
   fastify.get("/health", healthHandler);

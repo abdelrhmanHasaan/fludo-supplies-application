@@ -107,6 +107,30 @@ async function autoEnsureSchema() {
         console.log('[API] 0003 migration applied successfully!');
       }
     }
+
+    // Check Migration 0004 (FigJam Overhaul)
+    const m4Check = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_schema = 'app' AND table_name = 'cash_movements'
+      ) AS exists;
+    `).catch(() => ({ rows: [{ exists: false }] }));
+
+    if (!m4Check.rows[0]?.exists) {
+      console.log('[API] Applying 0004_figjam_overhaul.sql migration...');
+      const migration4Paths = [
+        path.join(__dirname, '0004_figjam_overhaul.sql'),
+        path.join(__dirname, '..', '0004_figjam_overhaul.sql'),
+        path.resolve(process.cwd(), 'db/migrations/0004_figjam_overhaul.sql'),
+        path.resolve(process.cwd(), '../../db/migrations/0004_figjam_overhaul.sql'),
+        path.join(process.cwd(), '0004_figjam_overhaul.sql'),
+      ];
+      const sql4Path = migration4Paths.find((p) => fs.existsSync(p));
+      if (sql4Path) {
+        const sql = fs.readFileSync(sql4Path, 'utf8');
+        await pool.query(sql);
+        console.log('[API] 0004 migration applied successfully!');
+      }
+    }
   } catch (err) {
     console.warn('[API] autoEnsureSchema check notice:', err);
   }
@@ -174,7 +198,7 @@ async function start() {
 
   const healthHandler = async () => ({
     status: 'healthy',
-    version: '1.5.0',
+    version: '1.6.0',
     time: new Date().toISOString(),
   });
   fastify.get('/health', healthHandler);

@@ -449,6 +449,31 @@ async function startFullSystem(): Promise<boolean> {
           logDesktop('[STARTUP] 0003_comprehensive_schema_update.sql applied via psql.');
         }
       }
+
+      // Check Migration 0004 (FigJam Overhaul)
+      const checkM4 = execFileSync(
+        pgBinaries.psqlExe,
+        ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-t', '-c', "SELECT to_regclass('app.cash_movements');"],
+        { encoding: 'utf8', windowsHide: true, stdio: 'pipe' }
+      ).trim();
+
+      if (!checkM4 || checkM4 === '') {
+        logDesktop('[STARTUP] Migration 0004 needed. Applying 0004_figjam_overhaul.sql...');
+        const mig4Candidates = [
+          path.join(appPath, '0004_figjam_overhaul.sql'),
+          path.join(__dirname, '../0004_figjam_overhaul.sql'),
+          path.join(__dirname, '0004_figjam_overhaul.sql'),
+          path.resolve(__dirname, '../../db/migrations/0004_figjam_overhaul.sql'),
+        ];
+        const mig4 = mig4Candidates.find((m) => fs.existsSync(m));
+        if (mig4) {
+          execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-f', mig4], {
+            stdio: 'pipe',
+            windowsHide: true,
+          });
+          logDesktop('[STARTUP] 0004_figjam_overhaul.sql applied via psql.');
+        }
+      }
     } catch (migErr: any) {
       logDesktop(`[STARTUP] Note on migration check: ${migErr?.message}`);
     }

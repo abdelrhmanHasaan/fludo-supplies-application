@@ -229,6 +229,9 @@ const invoicesRoutes = async (fastify) => {
                 driverId: body.driverId,
                 vehicleId: body.vehicleId,
                 destination: body.destination,
+                locationType: body.locationType,
+                siteId: body.siteId,
+                placePartyId: body.placePartyId,
                 notes: body.notes,
                 lines: body.lines,
             });
@@ -279,11 +282,30 @@ const invoicesRoutes = async (fastify) => {
             return await (0, invoices_js_1.createPurchaseInvoice)(client, {
                 partyId: body.partyId,
                 invoiceDate: body.invoiceDate || new Date().toISOString().split('T')[0],
+                handlingFee: body.handlingFee || 0,
+                discountAmount: body.discountAmount || 0,
+                amountPaidNow: body.amountPaidNow || 0,
+                cashAccountId: body.cashAccountId,
+                locationType: body.locationType,
+                siteId: body.siteId,
+                placePartyId: body.placePartyId,
                 notes: body.notes,
                 lines: body.lines,
             });
         });
         return { status: 'created', invoiceId };
+    });
+    // Record Invoice Print Event (Plain vs with Carried Balance Snapshot)
+    fastify.post('/print-log', async (req, reply) => {
+        const { invoice_id, invoice_kind, mode, carried_balance_snapshot } = req.body;
+        if (!invoice_id) {
+            return reply.status(400).send({ error: 'معرف الفاتورة مطلوب' });
+        }
+        const normalizedKind = (invoice_kind === 'purchase') ? 'purchase' : 'sale';
+        const res = await db_js_1.pool.query(`INSERT INTO app.invoice_prints (invoice_id, invoice_kind, mode, carried_balance_snapshot)
+       VALUES ($1, $2, COALESCE($3, 'plain'), COALESCE($4, 0))
+       RETURNING *`, [invoice_id, normalizedKind, mode || 'plain', carried_balance_snapshot || 0]);
+        return { status: 'success', log: res.rows[0] };
     });
 };
 exports.invoicesRoutes = invoicesRoutes;

@@ -85,6 +85,13 @@ if (fs.existsSync(sqlMigration3)) {
   console.log('  ✓ 0003 SQL schema migration copied to desktop package.');
 }
 
+const sqlMigration4 = path.join(rootDir, 'db', 'migrations', '0004_figjam_overhaul.sql');
+if (fs.existsSync(sqlMigration4)) {
+  fs.copyFileSync(sqlMigration4, path.join(apiTarget, '0004_figjam_overhaul.sql'));
+  fs.copyFileSync(sqlMigration4, path.join(rootDir, 'apps', 'desktop', '0004_figjam_overhaul.sql'));
+  console.log('  ✓ 0004 SQL schema migration copied to desktop package.');
+}
+
 // Ensure PostgreSQL Portable Runtime is staged in apps/desktop/pgsql
 const pgsqlDest = path.join(rootDir, 'apps', 'desktop', 'pgsql');
 const pgsqlDestExe = path.join(pgsqlDest, 'bin', 'postgres.exe');
