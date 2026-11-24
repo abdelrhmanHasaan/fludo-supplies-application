@@ -10,6 +10,7 @@ export interface InvoiceLineInput {
   discountAmount?: number;
   orderLineId?: string;
   notes?: string;
+  lineMode?: 'reserve' | 'on_account';
 }
 
 export interface CreateSalesInvoiceParams {
@@ -23,6 +24,9 @@ export interface CreateSalesInvoiceParams {
   vehicleId?: string;
   destination?: string;
   notes?: string;
+  locationType?: 'branch' | 'party' | 'site' | 'party_place';
+  siteId?: string;
+  placePartyId?: string;
   lines: InvoiceLineInput[];
 }
 
@@ -53,12 +57,13 @@ export async function createSalesInvoice(
   // 2. Insert invoice header
   const handlingFee = params.handlingFee || 0;
   const discountAmount = params.discountAmount || 0;
+  const locType = params.locationType === 'party' || params.locationType === 'party_place' ? 'party_place' : 'site';
   const invRes = await client.query(
     `INSERT INTO app.sales_invoices (
       invoice_no, party_id, branch_id, invoice_date, status,
       handling_fee, discount_amount, previous_balance_snapshot,
-      notes
-    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8)
+      notes, location_type, site_id, place_party_id
+    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11)
     RETURNING id`,
     [
       invoiceNumber,
@@ -69,6 +74,9 @@ export async function createSalesInvoice(
       discountAmount,
       previousBalance,
       params.notes || null,
+      locType,
+      params.siteId || branchId,
+      params.placePartyId || null,
     ]
   );
   const invoiceId = invRes.rows[0].id;
@@ -88,8 +96,8 @@ export async function createSalesInvoice(
     await client.query(
       `INSERT INTO app.sales_invoice_lines (
         invoice_id, line_no, product_id, unit_id, unit_name, qty, unit_price,
-        discount_amount, catalog_price_snapshot, order_line_id, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        discount_amount, catalog_price_snapshot, order_line_id, notes, line_mode
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         invoiceId,
         lineNo++,
@@ -102,6 +110,7 @@ export async function createSalesInvoice(
         catalogPrice,
         line.orderLineId || null,
         line.notes || null,
+        line.lineMode || 'on_account',
       ]
     );
   }
@@ -150,9 +159,9 @@ export async function approveSalesInvoice(
     [invoiceId]
   );
 
-  // 1. Stock movements for physical goods
+  // 1. Stock movements for physical goods (only for on_account/immediate lines, not reservations)
   for (const line of linesRes.rows) {
-    if (line.kind === 'goods') {
+    if (line.kind === 'goods' && line.line_mode !== 'reserve') {
       await recordStockMovement(client, {
         productId: line.product_id,
         movementType: 'sale_issue',
@@ -341,7 +350,14 @@ export async function createPurchaseInvoice(
   params: {
     partyId: string;
     invoiceDate: string;
+    handlingFee?: number;
+    discountAmount?: number;
+    amountPaidNow?: number;
+    cashAccountId?: string;
     notes?: string;
+    locationType?: 'branch' | 'party' | 'site' | 'party_place';
+    siteId?: string;
+    placePartyId?: string;
     lines: InvoiceLineInput[];
   }
 ): Promise<string> {
@@ -354,43 +370,77 @@ export async function createPurchaseInvoice(
   const branchId = branchRes.rows[0]?.id;
   if (!branchId) throw new Error('لا يوجد فرع نشط لربط إذن الاستلام به');
 
+  const handlingFee = params.handlingFee || 0;
+  const discountAmount = params.discountAmount || 0;
+  const locType = params.locationType === 'party' || params.locationType === 'party_place' ? 'party_place' : 'site';
+
   const invRes = await client.query(
     `INSERT INTO app.purchase_invoices (
-      invoice_no, party_id, branch_id, invoice_date, status, notes
-    ) VALUES ($1, $2, $3, $4, 'draft', $5)
+      invoice_no, party_id, branch_id, invoice_date, status, notes,
+      handling_fee, discount_amount, location_type, site_id, place_party_id
+    ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10)
     RETURNING id`,
-    [invoiceNumber, params.partyId, branchId, params.invoiceDate, params.notes || null]
+    [
+      invoiceNumber,
+      params.partyId,
+      branchId,
+      params.invoiceDate,
+      params.notes || null,
+      handlingFee,
+      discountAmount,
+      locType,
+      params.siteId || branchId,
+      params.placePartyId || null,
+    ]
   );
   const invoiceId = invRes.rows[0].id;
 
   let lineNo = 1;
-  let totalAmount = 0;
+  let totalLinesAmount = 0;
   for (const line of params.lines) {
     const prodRes = await client.query(
-      'SELECT default_sale_price, unit_id FROM app.products WHERE id = $1',
+      'SELECT default_sale_price, unit_id, unit_name FROM app.products WHERE id = $1',
       [line.productId]
     );
     const unitId = prodRes.rows[0]?.unit_id || null;
-    const lineTotal = Math.round(line.qty * line.unitPrice * 100) / 100;
-    totalAmount += lineTotal;
+    const unitName = (line.unitName || prodRes.rows[0]?.unit_name || '').trim() || null;
+    const lineDiscount = line.discountAmount || 0;
+    const lineTotal = Math.round((line.qty * line.unitPrice - lineDiscount) * 100) / 100;
+    totalLinesAmount += lineTotal;
 
     await client.query(
       `INSERT INTO app.purchase_invoice_lines (
-        invoice_id, line_no, product_id, unit_id, qty, unit_price, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [invoiceId, lineNo++, line.productId, unitId, line.qty, line.unitPrice, line.notes || null]
+        invoice_id, line_no, product_id, unit_id, unit_name, qty, unit_price, discount_amount, notes, line_mode
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        invoiceId,
+        lineNo++,
+        line.productId,
+        unitId,
+        unitName,
+        line.qty,
+        line.unitPrice,
+        lineDiscount,
+        line.notes || null,
+        line.lineMode || 'on_account',
+      ]
     );
 
-    await recordStockMovement(client, {
-      productId: line.productId,
-      movementType: 'purchase_receipt',
-      quantity: line.qty,
-      unitCost: line.unitPrice,
-      sourceType: 'purchase_invoice',
-      sourceId: invoiceId,
-      notes: `إذن استلام مورد ${invoiceNumber}`,
-    });
+    // If on_account, immediately record stock receipt
+    if (line.lineMode !== 'reserve') {
+      await recordStockMovement(client, {
+        productId: line.productId,
+        movementType: 'purchase_receipt',
+        quantity: line.qty,
+        unitCost: line.unitPrice,
+        sourceType: 'purchase_invoice',
+        sourceId: invoiceId,
+        notes: `إذن استلام مورد ${invoiceNumber}`,
+      });
+    }
   }
+
+  const netPayable = totalLinesAmount + handlingFee - discountAmount;
 
   const journalId = await postJournalEntry(client, {
     entryDate: params.invoiceDate,
@@ -400,7 +450,7 @@ export async function createPurchaseInvoice(
     lines: [
       {
         accountCode: '1200', // Inventory (المخزون)
-        debit: totalAmount,
+        debit: totalLinesAmount,
         credit: 0,
         description: `توريد بضاعة إذن استلام ${invoiceNumber}`,
       },
@@ -408,7 +458,7 @@ export async function createPurchaseInvoice(
         accountCode: '2100', // Payable (الموردون)
         partyId: params.partyId,
         debit: 0,
-        credit: totalAmount,
+        credit: netPayable,
         description: `استحقاق مورد إذن استلام ${invoiceNumber}`,
       },
     ],
@@ -418,6 +468,59 @@ export async function createPurchaseInvoice(
     "UPDATE app.purchase_invoices SET status = 'approved', journal_entry_id = $1, approved_at = now() WHERE id = $2",
     [journalId, invoiceId]
   );
+
+  // If amountPaidNow > 0, record supplier payment
+  const amountPaidNow = Number(params.amountPaidNow || 0);
+  if (amountPaidNow > 0 && params.cashAccountId) {
+    const nextPayRes = await client.query("SELECT app.next_doc_number('payment_out') AS num");
+    const payNumber = nextPayRes.rows[0].num;
+
+    const payJournalId = await postJournalEntry(client, {
+      entryDate: params.invoiceDate,
+      sourceDocType: 'payment',
+      sourceDocId: invoiceId,
+      narration: `سداد نقدي مع فاتورة شراء ${invoiceNumber}`,
+      lines: [
+        {
+          accountCode: '2100', // Payable (الموردون)
+          partyId: params.partyId,
+          debit: amountPaidNow,
+          credit: 0,
+          description: `سداد للمورد مع فاتورة شراء ${invoiceNumber}`,
+        },
+        {
+          accountCode: '1010', // Cash
+          debit: 0,
+          credit: amountPaidNow,
+          description: `صرف نقدي من الخزينة لفاتورة ${invoiceNumber}`,
+        },
+      ],
+    });
+
+    const payRes = await client.query(
+      `INSERT INTO app.payments (
+        payment_no, direction, party_id, cash_account_id, payment_date, amount,
+        journal_entry_id, notes, status
+      ) VALUES ($1, 'out', $2, $3, $4, $5, $6, $7, 'approved')
+      RETURNING id`,
+      [
+        payNumber,
+        params.partyId,
+        params.cashAccountId,
+        params.invoiceDate,
+        amountPaidNow,
+        payJournalId,
+        `سداد مع فاتورة شراء ${invoiceNumber}`,
+      ]
+    );
+
+    const paymentId = payRes.rows[0].id;
+    await client.query(
+      `INSERT INTO app.payment_allocations (payment_id, purchase_invoice_id, amount)
+       VALUES ($1, $2, $3)`,
+      [paymentId, invoiceId, amountPaidNow]
+    );
+  }
 
   return invoiceId;
 }
