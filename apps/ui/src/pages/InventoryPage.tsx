@@ -22,6 +22,7 @@ import {
 export const InventoryPage: React.FC = () => {
   const [inventory, setInventory] = useState<any[]>([]);
   const [units, setUnits] = useState<any[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
@@ -74,12 +75,14 @@ export const InventoryPage: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [invRes, unitsRes] = await Promise.all([
+      const [invRes, unitsRes, branchesRes] = await Promise.all([
         api.getInventory(),
         api.getUnits().catch(() => []),
+        api.getBranches().catch(() => []),
       ]);
       setInventory(invRes || []);
       setUnits(unitsRes || []);
+      setBranches((branchesRes || []).filter((b: any) => b.is_active));
       if (invRes && invRes.length > 0) {
         setAdjProductId(invRes[0].product_id);
       }
@@ -254,6 +257,21 @@ export const InventoryPage: React.FC = () => {
     return Number(val || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ج.م';
   };
 
+  const totalEstimatedValue = useMemo(() => {
+    return inventory.reduce(
+      (sum, item) => sum + Number(item.physical_stock || 0) * Number(item.default_purchase_price || 0),
+      0
+    );
+  }, [inventory]);
+
+  const totalReservedQty = useMemo(() => {
+    return inventory.reduce((sum, item) => sum + Number(item.reserved_qty || 0), 0);
+  }, [inventory]);
+
+  const totalIncomingQty = useMemo(() => {
+    return inventory.reduce((sum, item) => sum + Number(item.incoming_qty || 0), 0);
+  }, [inventory]);
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6 animate-fadeIn" dir="rtl">
       {/* Top Header & Action Controls */}
@@ -302,6 +320,26 @@ export const InventoryPage: React.FC = () => {
         </div>
       </div>
 
+      {/* KPI Summary Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+          <p className="text-xs text-slate-500 font-bold mb-1">إجمالي الأصناف المسجلة</p>
+          <h3 className="text-xl font-black text-slate-900">{inventory.length} صنف</h3>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+          <p className="text-xs text-slate-500 font-bold mb-1">قيمة المخزون التقديرية</p>
+          <h3 className="text-xl font-black text-emerald-700" dir="ltr">{formatMoney(totalEstimatedValue)}</h3>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+          <p className="text-xs text-slate-500 font-bold mb-1">إجمالي البضاعة المحجوزة</p>
+          <h3 className="text-xl font-black text-indigo-700">{totalReservedQty.toLocaleString('ar-EG')}</h3>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+          <p className="text-xs text-slate-500 font-bold mb-1">إجمالي مطلوب من موردين</p>
+          <h3 className="text-xl font-black text-blue-700">{totalIncomingQty.toLocaleString('ar-EG')}</h3>
+        </div>
+      </div>
+
       {/* 4-Dimension Inventory Table */}
       <div className="bg-white rounded-3xl shadow-sm border border-slate-200/80 overflow-hidden">
         <div className="overflow-x-auto">
@@ -311,24 +349,30 @@ export const InventoryPage: React.FC = () => {
                 <th className="p-4">كود الصنف</th>
                 <th className="p-4">اسم الصنف</th>
                 <th className="p-4">الوحدة</th>
-                <th className="p-4 text-center text-slate-800">عندنا في المخزن</th>
+                <th className="p-4 text-center">سعر الشراء</th>
+                <th className="p-4 text-center">سعر البيع</th>
+                {branches.map((b) => (
+                  <th key={b.id} className="p-4 text-center text-slate-800 bg-slate-100/60 font-bold">
+                    الكمية في {b.name}
+                  </th>
+                ))}
+                <th className="p-4 text-center text-slate-900 font-black">إجمالي المخزن</th>
                 <th className="p-4 text-center text-blue-700">لنا عند المورد (مطلوب)</th>
                 <th className="p-4 text-center text-indigo-700">المحجوز للعملاء</th>
                 <th className="p-4 text-center text-emerald-700">المتاح للبيع</th>
-                <th className="p-4 text-center">سعر البيع الافتراضي</th>
                 <th className="p-4 text-center">إجراءات</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="p-12 text-center text-slate-400 font-bold">
+                  <td colSpan={11 + branches.length} className="p-12 text-center text-slate-400 font-bold">
                     جاري تحميل المخزون...
                   </td>
                 </tr>
               ) : filteredInventory.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="p-12 text-center text-slate-400 font-bold">
+                  <td colSpan={11 + branches.length} className="p-12 text-center text-slate-400 font-bold">
                     لا توجد أصناف مطابقة
                   </td>
                 </tr>
@@ -348,6 +392,29 @@ export const InventoryPage: React.FC = () => {
                         {item.unit_name || 'قطعة'}
                       </span>
                     </td>
+
+                    <td className="p-4 text-center font-bold text-slate-700">
+                      {formatMoney(item.default_purchase_price || 0)}
+                    </td>
+
+                    <td className="p-4 text-center font-bold text-slate-800">
+                      {formatMoney(item.default_sale_price || 0)}
+                    </td>
+
+                    {/* Dynamic Branch Columns */}
+                    {branches.map((b) => {
+                      const bs = item.branch_stocks?.find((s: any) => s.branch_id === b.id);
+                      const q = Number(bs?.qty_on_hand || 0);
+                      return (
+                        <td key={b.id} className="p-4 text-center font-bold text-slate-800 text-sm bg-slate-50/30">
+                          {q > 0 ? (
+                            <span className="text-emerald-700 font-black">{q.toLocaleString('ar-EG')}</span>
+                          ) : (
+                            <span className="text-slate-300">0</span>
+                          )}
+                        </td>
+                      );
+                    })}
 
                     {/* 1. عندنا في المخزن */}
                     <td className="p-4 text-center font-black text-base text-slate-900">
@@ -395,10 +462,6 @@ export const InventoryPage: React.FC = () => {
                       >
                         {item.available_stock.toLocaleString('ar-EG')}
                       </span>
-                    </td>
-
-                    <td className="p-4 text-center font-bold text-slate-800">
-                      {formatMoney(item.default_sale_price)}
                     </td>
 
                     <td className="p-4 text-center">
