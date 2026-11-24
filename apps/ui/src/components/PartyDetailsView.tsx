@@ -42,6 +42,7 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
   const [summary, setSummary] = useState<any>(null);
   const [shipments, setShipments] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
+  const [reservations, setReservations] = useState<any[]>([]);
   const [cashAccounts, setCashAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -76,16 +77,18 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [sumRes, shipRes, actRes, caRes] = await Promise.all([
+      const [sumRes, shipRes, actRes, caRes, resRes] = await Promise.all([
         api.getPartySummary(partyId),
         api.getPartyShipments(partyId),
         api.getPartyActivity(partyId),
         api.getCashAccounts ? api.getCashAccounts() : Promise.resolve([]),
+        api.getPartyReservations ? api.getPartyReservations(partyId).catch(() => []) : Promise.resolve([]),
       ]);
       setSummary(sumRes);
       setShipments(shipRes || []);
       setActivities(actRes || []);
       setCashAccounts(caRes || []);
+      setReservations(resRes || []);
 
       if (caRes && caRes.length > 0) {
         setTxCashAccountId((prev) => prev || caRes.find((c: any) => c.is_active)?.id || caRes[0].id);
@@ -384,7 +387,7 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
       </div>
 
       {/* A) Top Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
         {/* Card 1: إجمالي المشتريات */}
         <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm relative overflow-hidden">
           <div className="flex items-center justify-between mb-3">
@@ -480,7 +483,91 @@ export const PartyDetailsView: React.FC<PartyDetailsProps> = ({
             }`}
           />
         </div>
+
+        {/* Card 5: موعد التحصيل والعداد التنازلي */}
+        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm relative overflow-hidden">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-bold text-slate-500">
+              {isCustomer ? 'موعد التحصيل المتفق عليه' : 'موعد السداد المستحق'}
+            </span>
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+              <Clock className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="text-lg font-black text-slate-900">
+            {summary?.settlement_due_date
+              ? new Date(summary.settlement_due_date).toLocaleDateString('ar-EG')
+              : 'غير محدد'}
+          </div>
+          <div className="text-xs font-bold mt-2">
+            {summary?.countdown_days !== undefined && summary?.countdown_days !== null ? (
+              summary.countdown_days <= 0 ? (
+                <span className="text-rose-600">انتهت فترة السداد ({Math.abs(summary.countdown_days)} يوم تأخير)</span>
+              ) : (
+                <span className="text-amber-700">متبقي {summary.countdown_days} أيام</span>
+              )
+            ) : (
+              <span className="text-slate-400">لا يوجد تأخير</span>
+            )}
+          </div>
+          <div className="absolute top-0 right-0 w-1.5 h-full bg-amber-500 rounded-r-2xl" />
+        </div>
       </div>
+
+      {/* Reservations Table (FigJam: جدول الحجوزات) */}
+      {reservations.length > 0 && (
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/80 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                <Tag className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-slate-900">جدول الحجوزات والبضاعة غير المسلمة</h2>
+                <p className="text-xs text-slate-400">بيان تفصيلي لكل صنف محجوز والمبلغ المخصص والكمية المتبقية</p>
+              </div>
+            </div>
+            <span className="px-3 py-1 rounded-full text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+              {reservations.length} أصناف محجوزة
+            </span>
+          </div>
+
+          <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+            <table className="w-full text-right text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                <tr>
+                  <th className="p-3">الصنف</th>
+                  <th className="p-3">الكود</th>
+                  <th className="p-3">الوحدة</th>
+                  <th className="p-3 text-center">الكمية المحجوزة</th>
+                  <th className="p-3 text-center">سعر الوحدة</th>
+                  <th className="p-3 text-center">الإجمالي</th>
+                  <th className="p-3 text-center">المدفوع المخصص</th>
+                  <th className="p-3 text-center">السعر المتبقي</th>
+                  <th className="p-3 text-center">الكمية المستلمة</th>
+                  <th className="p-3 text-center">الكمية المتبقية</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {reservations.map((r, i) => (
+                  <tr key={i} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-3 font-bold text-slate-900">{r.product_name}</td>
+                    <td className="p-3 font-mono text-slate-500">{r.product_code}</td>
+                    <td className="p-3">{r.unit_name || 'قطعة'}</td>
+                    <td className="p-3 text-center font-black text-slate-800">{Number(r.qty_ordered).toLocaleString('ar-EG')}</td>
+                    <td className="p-3 text-center font-mono">{formatMoney(r.unit_price)}</td>
+                    <td className="p-3 text-center font-bold text-slate-900">{formatMoney(r.line_total)}</td>
+                    <td className="p-3 text-center font-bold text-emerald-600">{formatMoney(r.paid_allocated)}</td>
+                    <td className="p-3 text-center font-bold text-amber-600">{formatMoney(r.price_remaining)}</td>
+                    <td className="p-3 text-center font-bold text-slate-600">{Number(r.qty_delivered || 0).toLocaleString('ar-EG')}</td>
+                    <td className="p-3 text-center font-black text-indigo-700">{Number(r.qty_remaining || 0).toLocaleString('ar-EG')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* B) حركات العربات (الشحنات) */}
       <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/80 space-y-6">
