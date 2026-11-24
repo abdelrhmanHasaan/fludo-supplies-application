@@ -140800,7 +140800,7 @@ function getPool() {
       host: process.env.PGHOST || "127.0.0.1",
       port,
       database: process.env.PGDATABASE || "fludo_erp",
-      user: process.env.PGUSER || "erp_owner",
+      user: process.env.PGUSER || "erp_runtime",
       password: process.env.PGPASSWORD || "",
       max: 20,
       idleTimeoutMillis: 3e4,
@@ -145740,6 +145740,14 @@ async function autoEnsureSchema() {
   try {
     const fs2 = await import("node:fs");
     const path2 = await import("node:path");
+    const smCheck = await pool.query(`
+      SELECT version FROM app.schema_migrations;
+    `).catch(() => ({ rows: [] }));
+    const appliedSet = new Set(smCheck.rows.map((r) => r.version));
+    if (appliedSet.has("0001_initial") && appliedSet.has("0002_fix_constraints_and_search") && appliedSet.has("0003_comprehensive_schema_update") && appliedSet.has("0004_figjam_overhaul")) {
+      console.log("[API] Schema verified against app.schema_migrations (Version: 4).");
+      return;
+    }
     const res = await pool.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 

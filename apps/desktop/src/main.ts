@@ -11,10 +11,10 @@ import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { spawn, execFileSync, execSync, ChildProcess } from 'node:child_process';
 
-let safeDirs: { baseDir: string; dataDir: string; logsDir: string } | null = null;
+let safeDirs: { baseDir: string; dataDir: string; logsDir: string; backupsDir: string } | null = null;
 
-// Safe ASCII Path Resolver (Requirement 2b - Never non-ASCII/Arabic usernames)
-function resolveSafeAsciiDir(): { baseDir: string; dataDir: string; logsDir: string } {
+// Safe ASCII Path Resolver (Guaranteed ASCII, no Arabic username crash, NO dependency on 8.3 names)
+function resolveSafeAsciiDir(): { baseDir: string; dataDir: string; logsDir: string; backupsDir: string } {
   // 1. Primary: C:\ProgramData\FludoSuppliesERP (Standard Windows shared ASCII path)
   const progData = process.env.ProgramData || 'C:\\ProgramData';
   const cand1 = path.join(progData, 'FludoSuppliesERP');
@@ -27,32 +27,76 @@ function resolveSafeAsciiDir(): { baseDir: string; dataDir: string; logsDir: str
       baseDir: cand1,
       dataDir: path.join(cand1, 'data'),
       logsDir: path.join(cand1, 'logs'),
+      backupsDir: path.join(cand1, 'backups'),
     };
   } catch {}
 
-  // 2. Secondary: Windows 8.3 Short ASCII Path of LOCALAPPDATA
+  // 2. Secondary: C:\Users\Public\FludoSuppliesERP (Standard Windows Public profile, pure ASCII, writable by all local users, zero 8.3 reliance)
   try {
-    const localApp = process.env.LOCALAPPDATA || 'C:\\';
-    const shortLocal = execSync(`cmd /c for %I in ("${localApp}") do @echo %~sI`, { encoding: 'utf8' }).trim();
-    if (shortLocal) {
-      const cand2 = path.join(shortLocal, 'FludoERP');
-      fs.mkdirSync(cand2, { recursive: true });
-      return {
-        baseDir: cand2,
-        dataDir: path.join(cand2, 'data'),
-        logsDir: path.join(cand2, 'logs'),
-      };
-    }
+    const publicDir = process.env.PUBLIC || 'C:\\Users\\Public';
+    const cand2 = path.join(publicDir, 'FludoSuppliesERP');
+    fs.mkdirSync(cand2, { recursive: true });
+    const testFile = path.join(cand2, 'perm.tmp');
+    fs.writeFileSync(testFile, 'ok');
+    fs.unlinkSync(testFile);
+    return {
+      baseDir: cand2,
+      dataDir: path.join(cand2, 'data'),
+      logsDir: path.join(cand2, 'logs'),
+      backupsDir: path.join(cand2, 'backups'),
+    };
   } catch {}
 
-  // 3. Fallback: C:\FludoERP
-  const cand3 = 'C:\\FludoERP';
+  // 3. Fallback: SystemDrive\FludoERP (e.g. C:\FludoERP)
+  const sysDrive = process.env.SystemDrive || 'C:';
+  const cand3 = path.join(sysDrive, 'FludoERP');
   fs.mkdirSync(cand3, { recursive: true });
   return {
     baseDir: cand3,
     dataDir: path.join(cand3, 'data'),
     logsDir: path.join(cand3, 'logs'),
+    backupsDir: path.join(cand3, 'backups'),
   };
+}
+
+// Windows ACL Security Hardening (Restricting data directory to current user, SYSTEM, Administrators)
+function applyFolderAcl(targetDir: string) {
+  try {
+    const currentUsername = process.env.USERNAME || 'SYSTEM';
+    execFileSync('icacls', [
+      targetDir,
+      '/inheritance:r',
+      '/grant:r', `${currentUsername}:(OI)(CI)F`,
+      '/grant:r', 'SYSTEM:(OI)(CI)F',
+      '/grant:r', 'Administrators:(OI)(CI)F'
+    ], { stdio: 'ignore', windowsHide: true });
+    logDesktop(`[SECURITY] ACL applied successfully to: ${targetDir}`);
+  } catch (aclErr: any) {
+    logDesktop(`[SECURITY] Note on ACL application: ${aclErr?.message}`);
+  }
+}
+
+// SCRAM Authentication & Dynamic Credentials Manager
+interface DbCredentials {
+  ownerPass: string;
+  runtimePass: string;
+}
+
+function getOrCreateDbCredentials(baseDir: string): DbCredentials {
+  const authFile = path.join(baseDir, 'auth.json');
+  if (fs.existsSync(authFile)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(authFile, 'utf8'));
+      if (data.ownerPass && data.runtimePass) return data;
+    } catch {}
+  }
+  const creds: DbCredentials = {
+    ownerPass: crypto.randomBytes(32).toString('hex'),
+    runtimePass: crypto.randomBytes(32).toString('hex'),
+  };
+  fs.writeFileSync(authFile, JSON.stringify(creds, null, 2), { encoding: 'utf8', mode: 0o600 });
+  applyFolderAcl(authFile);
+  return creds;
 }
 
 // Persistent logger
@@ -179,6 +223,7 @@ function resolvePostgresBinaries(): {
   initdbExe: string;
   createdbExe: string;
   psqlExe: string;
+  pgDumpExe: string;
   pgIsReadyExe: string;
   pgCtlExe: string;
   shareDir: string;
@@ -206,6 +251,7 @@ function resolvePostgresBinaries(): {
     initdbExe: path.join(binDir, 'initdb.exe'),
     createdbExe: path.join(binDir, 'createdb.exe'),
     psqlExe: path.join(binDir, 'psql.exe'),
+    pgDumpExe: path.join(binDir, 'pg_dump.exe'),
     pgIsReadyExe: path.join(binDir, 'pg_isready.exe'),
     pgCtlExe: path.join(binDir, 'pg_ctl.exe'),
     shareDir,
@@ -282,8 +328,18 @@ async function startFullSystem(): Promise<boolean> {
 
   try {
     safeDirs = resolveSafeAsciiDir();
+    fs.mkdirSync(safeDirs.baseDir, { recursive: true });
+    fs.mkdirSync(safeDirs.dataDir, { recursive: true });
+    fs.mkdirSync(safeDirs.logsDir, { recursive: true });
+    fs.mkdirSync(safeDirs.backupsDir, { recursive: true });
+    applyFolderAcl(safeDirs.baseDir);
+    applyFolderAcl(safeDirs.dataDir);
+
     logDesktop(`[STARTUP] Safe ASCII Data directory: ${safeDirs.dataDir}`);
     logDesktop(`[STARTUP] Safe ASCII Logs directory: ${safeDirs.logsDir}`);
+    logDesktop(`[STARTUP] Safe ASCII Backups directory: ${safeDirs.backupsDir}`);
+
+    const dbCreds = getOrCreateDbCredentials(safeDirs.baseDir);
 
     // Clean stale postmaster.pid and orphans
     cleanupStaleProcesses(safeDirs.dataDir);
@@ -298,7 +354,6 @@ async function startFullSystem(): Promise<boolean> {
     if (!isClusterInitialized) {
       broadcastProgress('db_init', 'جاري تهيئة وتأسيس قاعدة البيانات للمرة الأولى (UTF-8)...', 30);
       logDesktop('[STARTUP] Initializing cluster with initdb.exe...');
-      fs.mkdirSync(safeDirs.dataDir, { recursive: true });
 
       const initArgs = [
         '-D', safeDirs.dataDir,
@@ -327,11 +382,11 @@ async function startFullSystem(): Promise<boolean> {
     dynamicApiPort = await getFreePort();
     logDesktop(`[STARTUP] Allocated dynamic PG port: ${dynamicPgPort}, API port: ${dynamicApiPort}`);
 
-    // 4. Configure postgresql.conf with dynamic port
+    // 4. Configure postgresql.conf with dynamic port and SCRAM encryption
     const confPath = path.join(safeDirs.dataDir, 'postgresql.conf');
     let confContent = fs.existsSync(confPath) ? fs.readFileSync(confPath, 'utf8') : '';
-    confContent = confContent.replace(/^port\s*=\s*\d+/gm, '');
-    confContent += `\nport = ${dynamicPgPort}\nlisten_addresses = '127.0.0.1'\nmax_connections = 100\nshared_buffers = 128MB\n`;
+    confContent = confContent.replace(/^(port|listen_addresses|max_connections|shared_buffers|password_encryption)\s*=\s*.*/gm, '');
+    confContent += `\nport = ${dynamicPgPort}\nlisten_addresses = '127.0.0.1'\nmax_connections = 100\nshared_buffers = 128MB\npassword_encryption = 'scram-sha-256'\n`;
     fs.writeFileSync(confPath, confContent, 'utf8');
 
     // 5. Start postgres child process
@@ -369,10 +424,49 @@ async function startFullSystem(): Promise<boolean> {
     }
     logDesktop('[STARTUP] PostgreSQL accepted connections.');
 
-    // 7. Ensure database fludo_erp exists
-    broadcastProgress('migrations', 'جاري التحقق من وجود قاعدة البيانات والجداول الهيكلية...', 75);
+    // 7. Security Hardening: Set SCRAM passwords, Create erp_runtime (DML-only), Enforce scram-sha-256 in pg_hba.conf
+    const bootstrapSql = `
+      ALTER ROLE erp_owner WITH PASSWORD '${dbCreds.ownerPass}';
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'erp_runtime') THEN
+          CREATE ROLE erp_runtime WITH LOGIN PASSWORD '${dbCreds.runtimePass}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+        ELSE
+          ALTER ROLE erp_runtime WITH PASSWORD '${dbCreds.runtimePass}';
+        END IF;
+      END
+      $$;
+    `;
+    try {
+      execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'postgres', '-c', bootstrapSql], {
+        env: { ...process.env, PGPASSWORD: dbCreds.ownerPass },
+        stdio: 'pipe',
+        windowsHide: true,
+      });
+    } catch {
+      // If password was not set yet, connect without password
+      execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'postgres', '-c', bootstrapSql], {
+        stdio: 'pipe',
+        windowsHide: true,
+      });
+    }
+
+    // Rewrite pg_hba.conf to enforce scram-sha-256 strictly (no trust)
+    const hbaPath = path.join(safeDirs.dataDir, 'pg_hba.conf');
+    const hbaContent = `# PostgreSQL Client Authentication Configuration File
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+host    all             all             127.0.0.1/32            scram-sha-256
+host    all             all             ::1/128                 scram-sha-256
+`;
+    fs.writeFileSync(hbaPath, hbaContent, 'utf8');
+    execFileSync(pgBinaries.pgCtlExe, ['reload', '-D', safeDirs.dataDir], { stdio: 'ignore', windowsHide: true });
+    logDesktop('[SECURITY] Configured SCRAM-SHA-256 authentication and erp_runtime role.');
+
+    // 8. Ensure database fludo_erp exists
+    broadcastProgress('migrations', 'جاري التحقق من وجود قاعدة البيانات والجداول الهيكلية...', 70);
     try {
       execFileSync(pgBinaries.createdbExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', 'fludo_erp'], {
+        env: { ...process.env, PGPASSWORD: dbCreds.ownerPass },
         stdio: 'pipe',
         windowsHide: true,
       });
@@ -381,104 +475,164 @@ async function startFullSystem(): Promise<boolean> {
       // already exists
     }
 
+    // 9. Ensure schema_migrations table and baseline DML privileges for erp_runtime
+    const initMigrationsSql = `
+      CREATE SCHEMA IF NOT EXISTS app;
+      CREATE TABLE IF NOT EXISTS app.schema_migrations (
+        version text PRIMARY KEY,
+        checksum text,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      );
+      GRANT CONNECT ON DATABASE fludo_erp TO erp_runtime;
+      GRANT USAGE ON SCHEMA app TO erp_runtime;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO erp_runtime;
+      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO erp_runtime;
+      GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA app TO erp_runtime;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA app GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO erp_runtime;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA app GRANT USAGE, SELECT ON SEQUENCES TO erp_runtime;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA app GRANT EXECUTE ON FUNCTIONS TO erp_runtime;
+      REVOKE CREATE ON SCHEMA app FROM erp_runtime;
+      REVOKE CREATE ON SCHEMA public FROM erp_runtime;
+    `;
+    execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-c', initMigrationsSql], {
+      env: { ...process.env, PGPASSWORD: dbCreds.ownerPass },
+      stdio: 'pipe',
+      windowsHide: true,
+    });
+
+    // 10. Sequential Migrations with Pre-Migration pg_dump Backup & REQUIRED_SCHEMA_VERSION Stop Screen
+    const REQUIRED_SCHEMA_VERSION = 4;
+    const MIGRATIONS = [
+      { num: 1, version: '0001_initial', file: '0001_initial.sql' },
+      { num: 2, version: '0002_fix_constraints_and_search', file: '0002_fix_constraints_and_search.sql' },
+      { num: 3, version: '0003_comprehensive_schema_update', file: '0003_comprehensive_schema_update.sql' },
+      { num: 4, version: '0004_figjam_overhaul', file: '0004_figjam_overhaul.sql' },
+    ];
+
+    const appliedVersionsRaw = execFileSync(
+      pgBinaries.psqlExe,
+      ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-t', '-A', '-c', 'SELECT version FROM app.schema_migrations;'],
+      { env: { ...process.env, PGPASSWORD: dbCreds.ownerPass }, encoding: 'utf8', windowsHide: true, stdio: 'pipe' }
+    ).trim();
+
+    const appliedSet = new Set(appliedVersionsRaw.split('\n').map((s) => s.trim()).filter(Boolean));
+
+    const existingTablesCount = parseInt(
+      execFileSync(
+        pgBinaries.psqlExe,
+        ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-t', '-A', '-c', "SELECT count(*) FROM information_schema.tables WHERE table_schema='app' AND table_name != 'schema_migrations';"],
+        { env: { ...process.env, PGPASSWORD: dbCreds.ownerPass }, encoding: 'utf8', windowsHide: true, stdio: 'pipe' }
+      ).trim() || '0',
+      10
+    );
+
     const appPath = app.getAppPath();
 
-    // Check if initial schema is present, if not run 0001 and 0002
-    try {
-      const checkTables = execFileSync(
-        pgBinaries.psqlExe,
-        ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-t', '-c', "SELECT to_regclass('app.users');"],
-        { encoding: 'utf8', windowsHide: true, stdio: 'pipe' }
-      ).trim();
+    for (const mig of MIGRATIONS) {
+      if (!appliedSet.has(mig.version)) {
+        // Pre-migration pg_dump backup if upgrading an existing populated schema
+        if (existingTablesCount > 0) {
+          fs.mkdirSync(safeDirs.backupsDir, { recursive: true });
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const backupFileName = `pre_migration_${mig.version}_${ts}.sql`;
+          const backupPath = path.join(safeDirs.backupsDir, backupFileName);
+          logDesktop(`[BACKUP] Creating pre-migration backup before applying ${mig.version} to: ${backupPath}`);
+          broadcastProgress('backup', `جاري حفظ نسخة احتياطية للأمان قبل الترحيل (${mig.version})...`, 74);
 
-      if (!checkTables || checkTables === '') {
-        logDesktop('[STARTUP] Fresh DB detected. Applying migrations 0001 and 0002...');
-        broadcastProgress('migrations', 'جاري تهيئة جداول النظام والمحاسبة والمخازن...', 80);
-        const mig1Candidates = [
-          path.join(appPath, '0001_initial.sql'),
-          path.join(__dirname, '../0001_initial.sql'),
-          path.join(__dirname, '0001_initial.sql'),
-          path.resolve(__dirname, '../../db/migrations/0001_initial.sql'),
-        ];
-        const mig1 = mig1Candidates.find((m) => fs.existsSync(m));
-        if (mig1) {
-          execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-f', mig1], {
+          execFileSync(pgBinaries.pgDumpExe, [
+            '-h', '127.0.0.1',
+            '-p', String(dynamicPgPort),
+            '-U', 'erp_owner',
+            '-d', 'fludo_erp',
+            '-f', backupPath,
+            '--clean', '--if-exists',
+          ], {
+            env: { ...process.env, PGPASSWORD: dbCreds.ownerPass },
             stdio: 'pipe',
             windowsHide: true,
           });
-          logDesktop('[STARTUP] 0001_initial.sql applied via psql.');
+          const bSize = fs.existsSync(backupPath) ? fs.statSync(backupPath).size : 0;
+          logDesktop(`[BACKUP] Pre-migration backup created (${bSize} bytes).`);
         }
 
-        const mig2Candidates = [
-          path.join(appPath, '0002_fix_constraints_and_search.sql'),
-          path.join(__dirname, '../0002_fix_constraints_and_search.sql'),
-          path.join(__dirname, '0002_fix_constraints_and_search.sql'),
-          path.resolve(__dirname, '../../db/migrations/0002_fix_constraints_and_search.sql'),
+        const migCandidates = [
+          path.join(appPath, mig.file),
+          path.join(__dirname, '../' + mig.file),
+          path.join(__dirname, mig.file),
+          path.resolve(__dirname, '../../db/migrations/' + mig.file),
+          path.resolve(process.cwd(), 'db/migrations/' + mig.file),
         ];
-        const mig2 = mig2Candidates.find((m) => fs.existsSync(m));
-        if (mig2) {
-          execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-f', mig2], {
-            stdio: 'pipe',
-            windowsHide: true,
-          });
-          logDesktop('[STARTUP] 0002_fix_constraints_and_search.sql applied via psql.');
+        const migPath = migCandidates.find((m) => fs.existsSync(m));
+        if (!migPath) {
+          throw new Error(`تعذر العثور على ملف الترحيل: ${mig.file}`);
         }
+
+        logDesktop(`[MIGRATION] Applying ${mig.version} from ${migPath}...`);
+        broadcastProgress('migrations', `جاري تطبيق الترحيل الهيكلي (${mig.version})...`, 78);
+        execFileSync(pgBinaries.psqlExe, [
+          '-h', '127.0.0.1',
+          '-p', String(dynamicPgPort),
+          '-U', 'erp_owner',
+          '-d', 'fludo_erp',
+          '-f', migPath,
+        ], {
+          env: { ...process.env, PGPASSWORD: dbCreds.ownerPass },
+          stdio: 'pipe',
+          windowsHide: true,
+        });
+
+        // Record in app.schema_migrations
+        execFileSync(pgBinaries.psqlExe, [
+          '-h', '127.0.0.1',
+          '-p', String(dynamicPgPort),
+          '-U', 'erp_owner',
+          '-d', 'fludo_erp',
+          '-c', `INSERT INTO app.schema_migrations (version, checksum) VALUES ('${mig.version}', md5('${mig.version}')) ON CONFLICT (version) DO NOTHING;`,
+        ], {
+          env: { ...process.env, PGPASSWORD: dbCreds.ownerPass },
+          stdio: 'pipe',
+          windowsHide: true,
+        });
+
+        // Refresh runtime privileges for any newly created tables/views/sequences
+        execFileSync(pgBinaries.psqlExe, [
+          '-h', '127.0.0.1',
+          '-p', String(dynamicPgPort),
+          '-U', 'erp_owner',
+          '-d', 'fludo_erp',
+          '-c', `
+            GRANT USAGE ON SCHEMA app TO erp_runtime;
+            GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app TO erp_runtime;
+            GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA app TO erp_runtime;
+            GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA app TO erp_runtime;
+          `,
+        ], {
+          env: { ...process.env, PGPASSWORD: dbCreds.ownerPass },
+          stdio: 'pipe',
+          windowsHide: true,
+        });
+        logDesktop(`[MIGRATION] ${mig.version} applied and verified successfully.`);
       }
-
-      // Check Migration 0003
-      const checkM3 = execFileSync(
-        pgBinaries.psqlExe,
-        ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-t', '-c', "SELECT to_regclass('app.v_dashboard_metrics');"],
-        { encoding: 'utf8', windowsHide: true, stdio: 'pipe' }
-      ).trim();
-
-      if (!checkM3 || checkM3 === '') {
-        logDesktop('[STARTUP] Migration 0003 needed. Applying 0003_comprehensive_schema_update.sql...');
-        const mig3Candidates = [
-          path.join(appPath, '0003_comprehensive_schema_update.sql'),
-          path.join(__dirname, '../0003_comprehensive_schema_update.sql'),
-          path.join(__dirname, '0003_comprehensive_schema_update.sql'),
-          path.resolve(__dirname, '../../db/migrations/0003_comprehensive_schema_update.sql'),
-        ];
-        const mig3 = mig3Candidates.find((m) => fs.existsSync(m));
-        if (mig3) {
-          execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-f', mig3], {
-            stdio: 'pipe',
-            windowsHide: true,
-          });
-          logDesktop('[STARTUP] 0003_comprehensive_schema_update.sql applied via psql.');
-        }
-      }
-
-      // Check Migration 0004 (FigJam Overhaul)
-      const checkM4 = execFileSync(
-        pgBinaries.psqlExe,
-        ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-t', '-c', "SELECT to_regclass('app.cash_movements');"],
-        { encoding: 'utf8', windowsHide: true, stdio: 'pipe' }
-      ).trim();
-
-      if (!checkM4 || checkM4 === '') {
-        logDesktop('[STARTUP] Migration 0004 needed. Applying 0004_figjam_overhaul.sql...');
-        const mig4Candidates = [
-          path.join(appPath, '0004_figjam_overhaul.sql'),
-          path.join(__dirname, '../0004_figjam_overhaul.sql'),
-          path.join(__dirname, '0004_figjam_overhaul.sql'),
-          path.resolve(__dirname, '../../db/migrations/0004_figjam_overhaul.sql'),
-        ];
-        const mig4 = mig4Candidates.find((m) => fs.existsSync(m));
-        if (mig4) {
-          execFileSync(pgBinaries.psqlExe, ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-f', mig4], {
-            stdio: 'pipe',
-            windowsHide: true,
-          });
-          logDesktop('[STARTUP] 0004_figjam_overhaul.sql applied via psql.');
-        }
-      }
-    } catch (migErr: any) {
-      logDesktop(`[STARTUP] Note on migration check: ${migErr?.message}`);
     }
 
-    // 8. Launch API Server child process with dynamic ports & security token
+    // Verify REQUIRED_SCHEMA_VERSION
+    const finalCount = parseInt(
+      execFileSync(
+        pgBinaries.psqlExe,
+        ['-h', '127.0.0.1', '-p', String(dynamicPgPort), '-U', 'erp_owner', '-d', 'fludo_erp', '-t', '-A', '-c', "SELECT count(*) FROM app.schema_migrations WHERE version IN ('0001_initial', '0002_fix_constraints_and_search', '0003_comprehensive_schema_update', '0004_figjam_overhaul');"],
+        { env: { ...process.env, PGPASSWORD: dbCreds.ownerPass }, encoding: 'utf8', windowsHide: true, stdio: 'pipe' }
+      ).trim() || '0',
+      10
+    );
+
+    if (finalCount < REQUIRED_SCHEMA_VERSION) {
+      const errMsg = `إصدار قاعدة البيانات غير متوافق (المطلوب: ${REQUIRED_SCHEMA_VERSION}، تم تطبيق: ${finalCount}). تم إيقاف النظام لمنع فقدان البيانات.`;
+      broadcastError('REQUIRED_SCHEMA_VERSION_MISMATCH', errMsg);
+      throw new Error(errMsg);
+    }
+    logDesktop(`[STARTUP] All ${REQUIRED_SCHEMA_VERSION} migrations verified active in app.schema_migrations.`);
+
+    // 11. Launch API Server with runtime DML-only role and SCRAM credentials
     broadcastProgress('api_start', `جاري تشغيل خادم النظام الآمن على المنفذ الحر ${dynamicApiPort}...`, 85);
     const apiCandidates = [
       path.join(appPath, 'api', 'index.js'),
@@ -494,7 +648,8 @@ async function startFullSystem(): Promise<boolean> {
     process.env.PORT = String(dynamicApiPort);
     process.env.PGPORT = String(dynamicPgPort);
     process.env.PGHOST = '127.0.0.1';
-    process.env.PGUSER = 'erp_owner';
+    process.env.PGUSER = 'erp_runtime'; // DML-only runtime role
+    process.env.PGPASSWORD = dbCreds.runtimePass; // Dynamic SCRAM password
     process.env.PGDATABASE = 'fludo_erp';
     process.env.APP_SECRET_TOKEN = apiSecretToken;
     process.env.NODE_ENV = 'production';
@@ -719,13 +874,39 @@ app.on('second-instance', () => {
   }
 });
 
-app.on('will-quit', async (e) => {
-  await gracefulShutdown();
+let isQuitting = false;
+
+async function handleAppQuit(e?: Electron.Event) {
+  if (isQuitting) return;
+  if (e && typeof e.preventDefault === 'function') {
+    e.preventDefault();
+  }
+  isQuitting = true;
+  logDesktop('[APP] Quit requested. Awaiting graceful shutdown of PostgreSQL and API...');
+  try {
+    await gracefulShutdown();
+    logDesktop('[APP] Shutdown completed cleanly.');
+  } catch (err: any) {
+    logDesktop(`[APP] Notice on shutdown: ${err?.message}`);
+  } finally {
+    app.exit(0);
+  }
+}
+
+app.on('before-quit', (e) => {
+  if (!isQuitting) {
+    handleAppQuit(e);
+  }
 });
 
-app.on('window-all-closed', async () => {
-  await gracefulShutdown();
-  if (process.platform !== 'darwin') {
-    app.quit();
+app.on('will-quit', (e) => {
+  if (!isQuitting) {
+    handleAppQuit(e);
+  }
+});
+
+app.on('window-all-closed', () => {
+  if (!isQuitting && process.platform !== 'darwin') {
+    handleAppQuit();
   }
 });

@@ -35,6 +35,22 @@ async function autoEnsureSchema() {
     const fs = await import('node:fs');
     const path = await import('node:path');
 
+    // Check app.schema_migrations first
+    const smCheck = await pool.query(`
+      SELECT version FROM app.schema_migrations;
+    `).catch(() => ({ rows: [] }));
+
+    const appliedSet = new Set(smCheck.rows.map((r: any) => r.version));
+    if (
+      appliedSet.has('0001_initial') &&
+      appliedSet.has('0002_fix_constraints_and_search') &&
+      appliedSet.has('0003_comprehensive_schema_update') &&
+      appliedSet.has('0004_figjam_overhaul')
+    ) {
+      console.log('[API] Schema verified against app.schema_migrations (Version: 4).');
+      return;
+    }
+
     const res = await pool.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 

@@ -26,7 +26,7 @@ function getPool() {
             host: process.env.PGHOST || '127.0.0.1',
             port,
             database: process.env.PGDATABASE || 'fludo_erp',
-            user: process.env.PGUSER || 'erp_owner',
+            user: process.env.PGUSER || 'erp_runtime',
             password: process.env.PGPASSWORD || '',
             max: 20,
             idleTimeoutMillis: 30000,
