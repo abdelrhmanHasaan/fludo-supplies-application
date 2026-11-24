@@ -9,11 +9,14 @@ import {
   Users,
   Truck,
   UserCheck,
-  ArrowUpRight,
-  X,
   Building,
   RefreshCw,
-  ExternalLink,
+  Wrench,
+  DollarSign,
+  ShoppingBag,
+  Clock,
+  ArrowUpRight,
+  X,
 } from 'lucide-react';
 
 interface CashAccountItem {
@@ -29,6 +32,8 @@ interface DashboardMetrics {
   current_liquidity: number;
   current_month_sales: number;
   today_sales: number;
+  current_month_premises_expenses: number;
+  current_month_equipment_expenses: number;
   active_customers_count: number;
   active_suppliers_count: number;
   active_employees_count: number;
@@ -70,32 +75,36 @@ export const DashboardPage: React.FC<{ onNavigate: (section: any) => void }> = (
 
   const getKindLabel = (kind: string) => {
     switch (kind) {
-      case 'wallet': return 'محفظة إلكترونية';
-      case 'bank': return 'حساب بنكي';
-      case 'other': return 'حساب آخر';
+      case 'wallet':
+        return 'محفظة إلكترونية';
+      case 'bank':
+        return 'حساب بنكي';
+      case 'other':
+        return 'حساب آخر';
       case 'cash':
-      default: return 'خزينة نقدية';
+      default:
+        return 'خزينة نقدية';
     }
   };
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn" dir="rtl">
       {/* Top Header */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-emerald-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex items-center justify-center text-2xl font-black shadow-md shadow-blue-500/20">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white flex items-center justify-center text-2xl font-black shadow-md shadow-emerald-500/20">
             {logoLetter || 'F'}
           </div>
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-black text-slate-800">
-                {company?.name_ar || 'نظام Fludo Supplies لإدارة التوريدات'}
+                {company?.name_ar || 'Fludo Supplies ERP'}
               </h1>
             </div>
             <p className="text-sm text-slate-500 mt-1 flex items-center gap-2">
               <span>{company?.owner_name ? `المالك: ${company.owner_name}` : 'لوحة المؤشرات والرقابة المالية'}</span>
               <span>•</span>
-              <span className="text-blue-600 font-medium">{currentDateArabic}</span>
+              <span className="text-emerald-700 font-medium">{currentDateArabic}</span>
             </p>
           </div>
         </div>
@@ -104,7 +113,7 @@ export const DashboardPage: React.FC<{ onNavigate: (section: any) => void }> = (
           <button
             onClick={loadDashboard}
             disabled={loading}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-semibold transition-all active:scale-95"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-200 text-emerald-800 hover:bg-emerald-50 text-sm font-semibold transition-all active:scale-95"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             تحديث المؤشرات
@@ -112,238 +121,288 @@ export const DashboardPage: React.FC<{ onNavigate: (section: any) => void }> = (
         </div>
       </div>
 
-      {/* Exactly 8 Core Business Numbers */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Exactly 10 Green Dashboard Metric Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
         {/* 1. الفلوس اللي لينا */}
         <div
           onClick={() => onNavigate('customers')}
-          className="group bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:border-emerald-500 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
         >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-bold text-slate-600">الفلوس اللي لينا</span>
-            <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <ArrowUpRight className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">الفلوس اللي لينا</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <TrendingUp className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-slate-900 tracking-tight">
+          <div className="text-xl font-black text-emerald-800 tracking-tight" dir="ltr">
             {loading ? '...' : formatMoney(data?.total_receivables || 0)}
           </div>
-          <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-            <span>إجمالي مديونيات العملاء المدينة</span>
-            <span className="text-emerald-600 font-bold group-hover:underline">عرض العملاء ←</span>
-          </p>
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>مستحقات على العملاء</span>
+            <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+          </div>
           <div className="absolute top-0 right-0 w-1.5 h-full bg-emerald-500 rounded-r-2xl" />
         </div>
 
         {/* 2. الفلوس اللي علينا */}
         <div
           onClick={() => onNavigate('suppliers')}
-          className="group bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:border-rose-500 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
         >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-bold text-slate-600">الفلوس اللي علينا</span>
-            <div className="w-12 h-12 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <CreditCard className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">الفلوس اللي علينا</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <CreditCard className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-slate-900 tracking-tight">
+          <div className="text-xl font-black text-emerald-800 tracking-tight" dir="ltr">
             {loading ? '...' : formatMoney(data?.total_payables || 0)}
           </div>
-          <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-            <span>إجمالي مستحقات الموردين الدائنة</span>
-            <span className="text-rose-600 font-bold group-hover:underline">عرض الموردين ←</span>
-          </p>
-          <div className="absolute top-0 right-0 w-1.5 h-full bg-rose-500 rounded-r-2xl" />
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>مستحقات للموردين</span>
+            <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+          </div>
+          <div className="absolute top-0 right-0 w-1.5 h-full bg-teal-500 rounded-r-2xl" />
         </div>
 
-        {/* 3. السيولة النقدية الحالية */}
+        {/* 3. إجمالي السيولة الحالية */}
         <div
           onClick={() => setShowLiquidityModal(true)}
-          className="group bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:border-blue-500 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
         >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-bold text-slate-600">السيولة النقدية الحالية</span>
-            <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Wallet className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">إجمالي السيولة الحالية</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Wallet className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-slate-900 tracking-tight text-blue-700">
+          <div className="text-xl font-black text-emerald-800 tracking-tight" dir="ltr">
             {loading ? '...' : formatMoney(data?.current_liquidity || 0)}
           </div>
-          <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-            <span>مجموع أرصدة الخزائن والبنوك</span>
-            <span className="text-blue-600 font-bold group-hover:underline">تفاصيل الخزائن ←</span>
-          </p>
-          <div className="absolute top-0 right-0 w-1.5 h-full bg-blue-500 rounded-r-2xl" />
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>الخزائن والحسابات</span>
+            <span className="text-[10px] font-bold bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-800">تفاصيل</span>
+          </div>
+          <div className="absolute top-0 right-0 w-1.5 h-full bg-emerald-600 rounded-r-2xl" />
         </div>
 
         {/* 4. مبيعات الشهر الحالي */}
         <div
           onClick={() => onNavigate('invoices')}
-          className="group bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:border-indigo-500 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
         >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-bold text-slate-600">مبيعات الشهر الحالي</span>
-            <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <TrendingUp className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">مبيعات الشهر الحالي</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Calendar className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-slate-900 tracking-tight">
+          <div className="text-xl font-black text-emerald-800 tracking-tight" dir="ltr">
             {loading ? '...' : formatMoney(data?.current_month_sales || 0)}
           </div>
-          <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-            <span>صافي فواتير البيع المعتمدة</span>
-            <span className="text-indigo-600 font-bold group-hover:underline">عرض الفواتير ←</span>
-          </p>
-          <div className="absolute top-0 right-0 w-1.5 h-full bg-indigo-500 rounded-r-2xl" />
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>من أول الشهر حتى اليوم</span>
+            <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+          </div>
+          <div className="absolute top-0 right-0 w-1.5 h-full bg-green-500 rounded-r-2xl" />
         </div>
 
         {/* 5. مبيعات اليوم */}
         <div
           onClick={() => onNavigate('invoices')}
-          className="group bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:border-amber-500 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
         >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-bold text-slate-600">مبيعات اليوم</span>
-            <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Calendar className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">مبيعات اليوم</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Clock className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-slate-900 tracking-tight text-amber-600">
+          <div className="text-xl font-black text-emerald-800 tracking-tight" dir="ltr">
             {loading ? '...' : formatMoney(data?.today_sales || 0)}
           </div>
-          <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-            <span>فواتير اليوم الصافية</span>
-            <span className="text-amber-600 font-bold group-hover:underline">عرض التفاصيل ←</span>
-          </p>
-          <div className="absolute top-0 right-0 w-1.5 h-full bg-amber-500 rounded-r-2xl" />
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>حركات اليوم المعتمدة</span>
+            <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+          </div>
+          <div className="absolute top-0 right-0 w-1.5 h-full bg-emerald-400 rounded-r-2xl" />
         </div>
 
-        {/* 6. عدد العملاء */}
+        {/* 6. مصاريف المكان لهذا الشهر */}
         <div
-          onClick={() => onNavigate('customers')}
-          className="group bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:border-teal-500 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+          onClick={() => onNavigate('daily')}
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
         >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-bold text-slate-600">عدد العملاء</span>
-            <div className="w-12 h-12 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Users className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">مصاريف المكان للشهر</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Building className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-slate-900 tracking-tight">
-            {loading ? '...' : (data?.active_customers_count || 0).toLocaleString('ar-EG')}
+          <div className="text-xl font-black text-emerald-800 tracking-tight" dir="ltr">
+            {loading ? '...' : formatMoney(data?.current_month_premises_expenses || 0)}
           </div>
-          <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-            <span>العملاء النشطين في الدليل</span>
-            <span className="text-teal-600 font-bold group-hover:underline">دليل العملاء ←</span>
-          </p>
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>إيجارات ونثريات المقر</span>
+            <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+          </div>
+          <div className="absolute top-0 right-0 w-1.5 h-full bg-teal-600 rounded-r-2xl" />
+        </div>
+
+        {/* 7. مصاريف المعدات لهذا الشهر */}
+        <div
+          onClick={() => onNavigate('equipment')}
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">مصاريف المعدات للشهر</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Wrench className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-xl font-black text-emerald-800 tracking-tight" dir="ltr">
+            {loading ? '...' : formatMoney(data?.current_month_equipment_expenses || 0)}
+          </div>
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>وقود وصيانة سيارات ومعدات</span>
+            <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+          </div>
+          <div className="absolute top-0 right-0 w-1.5 h-full bg-emerald-500 rounded-r-2xl" />
+        </div>
+
+        {/* 8. عدد العملاء */}
+        <div
+          onClick={() => onNavigate('customers')}
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">عدد العملاء</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Users className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-emerald-800 tracking-tight">
+            {loading ? '...' : data?.active_customers_count || 0}
+          </div>
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>عميل مسجل ونشط</span>
+            <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+          </div>
+          <div className="absolute top-0 right-0 w-1.5 h-full bg-green-600 rounded-r-2xl" />
+        </div>
+
+        {/* 9. عدد الموردين */}
+        <div
+          onClick={() => onNavigate('suppliers')}
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">عدد الموردين</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Truck className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="text-2xl font-black text-emerald-800 tracking-tight">
+            {loading ? '...' : data?.active_suppliers_count || 0}
+          </div>
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>مورد ومحجر مسجل</span>
+            <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+          </div>
           <div className="absolute top-0 right-0 w-1.5 h-full bg-teal-500 rounded-r-2xl" />
         </div>
 
-        {/* 7. عدد الموردين */}
-        <div
-          onClick={() => onNavigate('suppliers')}
-          className="group bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:border-purple-500 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
-        >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-bold text-slate-600">عدد الموردين</span>
-            <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <Truck className="w-6 h-6" />
-            </div>
-          </div>
-          <div className="text-3xl font-black text-slate-900 tracking-tight">
-            {loading ? '...' : (data?.active_suppliers_count || 0).toLocaleString('ar-EG')}
-          </div>
-          <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-            <span>الموردين النشطين في الدليل</span>
-            <span className="text-purple-600 font-bold group-hover:underline">دليل الموردين ←</span>
-          </p>
-          <div className="absolute top-0 right-0 w-1.5 h-full bg-purple-500 rounded-r-2xl" />
-        </div>
-
-        {/* 8. عدد الموظفين */}
+        {/* 10. عدد الموظفين */}
         <div
           onClick={() => onNavigate('payroll')}
-          className="group bg-white rounded-2xl p-6 border border-slate-200 shadow-sm hover:shadow-lg hover:border-cyan-500 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
+          className="group bg-gradient-to-br from-white to-emerald-50/40 rounded-2xl p-5 border border-emerald-200/80 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all duration-200 cursor-pointer relative overflow-hidden active:scale-[0.99]"
         >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-sm font-bold text-slate-600">عدد الموظفين</span>
-            <div className="w-12 h-12 rounded-xl bg-cyan-50 text-cyan-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <UserCheck className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-emerald-900">عدد الموظفين</span>
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <UserCheck className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-3xl font-black text-slate-900 tracking-tight">
-            {loading ? '...' : (data?.active_employees_count || 0).toLocaleString('ar-EG')}
+          <div className="text-2xl font-black text-emerald-800 tracking-tight">
+            {loading ? '...' : data?.active_employees_count || 0}
           </div>
-          <p className="text-xs text-slate-400 mt-2 flex items-center justify-between">
-            <span>الموظفين والعمال النشطين</span>
-            <span className="text-cyan-600 font-bold group-hover:underline">سجل الموظفين ←</span>
-          </p>
-          <div className="absolute top-0 right-0 w-1.5 h-full bg-cyan-500 rounded-r-2xl" />
+          <div className="text-[11px] text-emerald-600/80 mt-1.5 flex items-center justify-between">
+            <span>موظف على قوة العمل</span>
+            <ArrowUpRight className="w-3.5 h-3.5 opacity-60" />
+          </div>
+          <div className="absolute top-0 right-0 w-1.5 h-full bg-emerald-600 rounded-r-2xl" />
         </div>
       </div>
 
       {/* Liquidity Breakdown Modal */}
       {showLiquidityModal && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                  <Wallet className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 text-lg">تفصيل السيولة النقدية</h3>
-                  <p className="text-xs text-slate-400">أرصدة الخزائن والمحافظ والحسابات البنكية</p>
-                </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full border border-emerald-200 p-6 space-y-5 animate-in fade-in duration-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-black text-lg text-slate-900">تفصيل السيولة النقدية بالخزائن</h3>
+                <p className="text-xs text-slate-400">بيان أرصدة الخزائن والحسابات النشطة الآن</p>
               </div>
               <button
                 onClick={() => setShowLiquidityModal(false)}
-                className="w-8 h-8 rounded-full hover:bg-slate-100 text-slate-400 flex items-center justify-center"
+                className="w-8 h-8 rounded-full hover:bg-slate-100 text-slate-400 flex items-center justify-center transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-3 max-h-80 overflow-y-auto">
-              {(!data?.cash_accounts_breakdown || data.cash_accounts_breakdown.length === 0) ? (
-                <div className="p-8 text-center text-slate-400">
-                  لا توجد حسابات أو خزائن مضافة حالياً
+            <div className="bg-emerald-50/70 border border-emerald-200/70 rounded-2xl p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <Wallet className="w-5 h-5" />
                 </div>
-              ) : (
-                data.cash_accounts_breakdown.map((acc) => (
-                  <div
-                    key={acc.id}
-                    className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 border border-slate-100"
-                  >
-                    <div>
-                      <div className="font-bold text-slate-800">{acc.name}</div>
-                      <span className="text-xs text-slate-400">{getKindLabel(acc.kind)}</span>
-                    </div>
-                    <div className="text-left font-black text-slate-900">
-                      {formatMoney(acc.balance)}
-                    </div>
+                <div>
+                  <div className="text-xs text-emerald-800 font-bold">إجمالي السيولة الحالية</div>
+                  <div className="text-xl font-black text-emerald-900" dir="ltr">
+                    {formatMoney(data?.current_liquidity || 0)}
                   </div>
-                ))
-              )}
-            </div>
-
-            <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
-              <div>
-                <span className="text-xs text-slate-400 block">إجمالي السيولة</span>
-                <span className="text-xl font-black text-blue-700">
-                  {formatMoney(data?.current_liquidity || 0)}
-                </span>
+                </div>
               </div>
               <button
                 onClick={() => {
                   setShowLiquidityModal(false);
                   onNavigate('treasury');
                 }}
-                className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-md shadow-blue-500/20 active:scale-95 transition-all"
+                className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs transition"
               >
-                <span>إدارة الخزائن</span>
-                <ExternalLink className="w-4 h-4" />
+                إدارة الخزينة
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {data?.cash_accounts_breakdown && data.cash_accounts_breakdown.length > 0 ? (
+                data.cash_accounts_breakdown.map((acc) => (
+                  <div
+                    key={acc.id}
+                    className="flex items-center justify-between p-3.5 rounded-xl border border-slate-200/80 hover:bg-slate-50 transition"
+                  >
+                    <div>
+                      <div className="font-bold text-sm text-slate-800">{acc.name}</div>
+                      <span className="text-[11px] font-semibold text-slate-400">{getKindLabel(acc.kind)}</span>
+                    </div>
+                    <div className="text-left font-black text-sm text-slate-900" dir="ltr">
+                      {formatMoney(acc.balance)}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-8 text-center text-slate-400 text-sm font-semibold">
+                  لا توجد حسابات أو خزائن نشطة
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex justify-end">
+              <button
+                onClick={() => setShowLiquidityModal(false)}
+                className="px-5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition"
+              >
+                إغلاق
               </button>
             </div>
           </div>

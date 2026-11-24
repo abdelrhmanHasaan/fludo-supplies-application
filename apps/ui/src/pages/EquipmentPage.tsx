@@ -5,12 +5,14 @@ import { Wrench, Plus, Fuel, History, X } from 'lucide-react';
 export const EquipmentPage: React.FC = () => {
   const [equipment, setEquipment] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
+  const [cashAccounts, setCashAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   // Form
   const [equipmentId, setEquipmentId] = useState('');
+  const [cashAccountId, setCashAccountId] = useState('');
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split('T')[0]);
   const [amount, setAmount] = useState<number>(0);
   const [expenseType, setExpenseType] = useState('fuel');
@@ -23,9 +25,15 @@ export const EquipmentPage: React.FC = () => {
   const loadEquipment = async () => {
     setLoading(true);
     try {
-      const res = await api.getEquipment();
-      setEquipment(res);
-      if (res.length > 0) setEquipmentId(res[0].id);
+      const [res, accs] = await Promise.all([
+        api.getEquipment(),
+        api.getCashAccounts ? api.getCashAccounts() : Promise.resolve([]),
+      ]);
+      setEquipment(res || []);
+      const activeAccs = (accs || []).filter((a: any) => a.is_active);
+      setCashAccounts(activeAccs);
+      if (activeAccs.length > 0) setCashAccountId(activeAccs[0].id);
+      if (res && res.length > 0) setEquipmentId(res[0].id);
     } catch (err) {
       console.error(err);
     } finally {
@@ -37,7 +45,7 @@ export const EquipmentPage: React.FC = () => {
     setShowHistoryModal(true);
     try {
       const res = await api.getEquipmentExpenses(eqId);
-      setExpenses(res);
+      setExpenses(res || []);
     } catch (err) {
       console.error(err);
     }
@@ -50,6 +58,7 @@ export const EquipmentPage: React.FC = () => {
     try {
       await api.recordEquipmentExpense({
         equipmentId,
+        cashAccountId: cashAccountId || undefined,
         expenseDate,
         amount,
         expenseType,
@@ -172,6 +181,21 @@ export const EquipmentPage: React.FC = () => {
                   <option value="driver">يومية سائق / مساعد</option>
                   <option value="wash">غسيل وتشحيم</option>
                   <option value="other">مصروفات أخرى</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">الخزينة المنصرف منها *</label>
+                <select
+                  value={cashAccountId}
+                  onChange={(e) => setCashAccountId(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg p-2.5 text-sm"
+                >
+                  {cashAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({Number(a.balance || 0).toLocaleString('ar-EG')} ج.م)
+                    </option>
+                  ))}
                 </select>
               </div>
 
