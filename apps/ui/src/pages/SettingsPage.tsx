@@ -22,7 +22,10 @@ import {
   UploadCloud,
   Globe,
   Database,
+  MapPin,
+  Plus,
 } from 'lucide-react';
+import { DataPortPage } from './DataPortPage';
 
 export const SettingsPage: React.FC = () => {
   const { company, logoLetter, refreshCompany } = useCompany();
@@ -30,6 +33,16 @@ export const SettingsPage: React.FC = () => {
   const [auditStatus, setAuditStatus] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
+  const [activeTab, setActiveTab] = useState<'general' | 'dataport' | 'security'>('general');
+
+  // Branches (مواقع النشاط / المقرات)
+  const [branches, setBranches] = useState<any[]>([]);
+  const [showBranchModal, setShowBranchModal] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<any | null>(null);
+  const [branchName, setBranchName] = useState('');
+  const [branchAddress, setBranchAddress] = useState('');
+  const [branchLoading, setBranchLoading] = useState(false);
+  const [branchError, setBranchError] = useState<string | null>(null);
 
   // Edit Company & Manager Modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -71,14 +84,16 @@ export const SettingsPage: React.FC = () => {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const [l, v, authSt, syncSt] = await Promise.all([
+      const [l, v, authSt, syncSt, branchList] = await Promise.all([
         api.getAuditLogs(),
         api.verifyAuditChain(),
         api.getAuthStatus() as any,
         api.getSyncStatus().catch(() => null),
+        api.getBranches().catch(() => []),
       ]);
       setLogs(l);
       setAuditStatus(v);
+      setBranches(branchList || []);
       if (authSt?.adminName) {
         setEditAdminName(authSt.adminName);
       }
@@ -91,6 +106,70 @@ export const SettingsPage: React.FC = () => {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenAddBranch = () => {
+    setEditingBranch(null);
+    setBranchName('');
+    setBranchAddress('');
+    setBranchError(null);
+    setShowBranchModal(true);
+  };
+
+  const handleOpenEditBranch = (br: any) => {
+    setEditingBranch(br);
+    setBranchName(br.name || '');
+    setBranchAddress(br.address || '');
+    setBranchError(null);
+    setShowBranchModal(true);
+  };
+
+  const handleSaveBranch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!branchName.trim()) {
+      setBranchError('يرجى إدخال اسم موقع النشاط / المقر');
+      return;
+    }
+    setBranchLoading(true);
+    setBranchError(null);
+    try {
+      if (editingBranch) {
+        await api.updateBranch(editingBranch.id, {
+          name: branchName.trim(),
+          address: branchAddress.trim() || undefined,
+        });
+      } else {
+        await api.createBranch({
+          name: branchName.trim(),
+          address: branchAddress.trim() || undefined,
+        });
+      }
+      const updated = await api.getBranches();
+      setBranches(updated);
+      setShowBranchModal(false);
+      setEditingBranch(null);
+      setBranchName('');
+      setBranchAddress('');
+    } catch (err: any) {
+      setBranchError(err.message || 'فشل حفظ موقع النشاط');
+    } finally {
+      setBranchLoading(false);
+    }
+  };
+
+  const handleDeleteBranch = async (br: any) => {
+    if (branches.length <= 1) {
+      alert('لا يمكن حذف المقر الوحيد، يجب أن يحتوي النظام على موقع نشاط واحد على الأقل');
+      return;
+    }
+    if (!window.confirm(`هل أنت متأكد من حذف موقع النشاط "${br.name}"؟`)) return;
+    try {
+      await api.deleteBranch(br.id);
+      const updated = await api.getBranches();
+      setBranches(updated);
+    } catch (err: any) {
+      alert(err.message || 'فشل حذف موقع النشاط');
     }
   };
 
@@ -256,41 +335,175 @@ export const SettingsPage: React.FC = () => {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8">
+    <div className="p-8 max-w-7xl mx-auto space-y-6">
       {/* Top Header */}
       <div>
         <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
           <Settings className="w-6 h-6 text-blue-600" />
-          <span>إعدادات المنشأة، الأمان، وسجل التدقيق المشفر</span>
+          <span>إعدادات المنشأة، المقرات، الأمان، والاستيراد/التصدير</span>
         </h2>
         <p className="text-xs text-slate-500 mt-1">
-          إدارة وتعديل بيانات المنشأة، حساب المدير، وحماية السجلات المالية بسلسلة تشفيرية SHA-256
+          إدارة بيانات المنشأة ومواقع النشاط (المقرات)، صلاحيات المدير، وحماية السجلات والاستيراد والتصدير
         </p>
       </div>
 
-      {/* Company Profile Card */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white font-black text-2xl flex items-center justify-center shadow-md">
-            {logoLetter}
-          </div>
-          <div>
-            <h3 className="text-lg font-black text-slate-800">{company.name_ar}</h3>
-            <p className="text-xs text-slate-500 font-medium">{company.tagline || 'مواد البناء والتوريدات العامة'}</p>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {company.address} {company.phones ? `— هاتف: ${company.phones}` : ''}
-            </p>
-          </div>
-        </div>
+      {/* Settings Navigation Tabs */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab('general')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'general'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>بيانات المنشأة ومواقع النشاط (المقرات)</span>
+        </button>
 
         <button
-          onClick={handleOpenEdit}
-          className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 shadow-sm"
+          type="button"
+          onClick={() => setActiveTab('dataport')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'dataport'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
         >
-          <Edit className="w-4 h-4" />
-          <span>تعديل بيانات المنشأة والمدير</span>
+          <Database className="w-4 h-4" />
+          <span>الاستيراد والتصدير (Excel / SQL)</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('security')}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+            activeTab === 'security'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4" />
+          <span>الأمان والمزامنة وتصفير النظام</span>
         </button>
       </div>
+
+      {/* TAB 1: General (Company Profile + Branches / Sites) */}
+      {activeTab === 'general' && (
+        <div className="space-y-6">
+          {/* Company Profile Card */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white font-black text-2xl flex items-center justify-center shadow-md">
+                {logoLetter}
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-800">{company.name_ar}</h3>
+                <p className="text-xs text-slate-500 font-medium">{company.tagline || 'مواد البناء والتوريدات العامة'}</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {company.address} {company.phones ? `— هاتف: ${company.phones}` : ''}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleOpenEdit}
+              className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 shadow-sm"
+            >
+              <Edit className="w-4 h-4" />
+              <span>تعديل بيانات المنشأة والمدير</span>
+            </button>
+          </div>
+
+          {/* Sites / Branches Management Card */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-5">
+            <div className="flex items-center justify-between border-b pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <MapPin className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-800">
+                    مواقع النشاط والمقرات ({branches.length})
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    المقرات الفعلية لتخزين البضائع وتحديد أعمدة الكميات في المخزن وخيارات الاستلام والتسليم
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleOpenAddBranch}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow transition-colors flex items-center gap-1.5"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ إضافة مقر جديد</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {branches.map((b) => (
+                <div
+                  key={b.id}
+                  className="p-4 rounded-xl border border-slate-200 hover:border-indigo-300 bg-slate-50/50 hover:bg-white transition-all space-y-3"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-xs">
+                        <MapPin className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-800">{b.name}</h4>
+                        <span className="text-[10px] text-slate-400 font-mono">كود: {b.code}</span>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      نشط
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-600 min-h-[1.5rem]">
+                    {b.address || 'العنوان غير محدد'}
+                  </p>
+
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditBranch(b)}
+                      className="flex-1 py-1.5 px-3 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>تعديل</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteBranch(b)}
+                      disabled={branches.length <= 1}
+                      className="p-1.5 bg-white hover:bg-rose-50 border border-slate-200 text-rose-600 text-xs font-bold rounded-lg transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                      title={branches.length <= 1 ? 'لا يمكن حذف المقر الوحيد' : 'حذف المقر'}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: Data Portability (Excel & SQL Import / Export) */}
+      {activeTab === 'dataport' && (
+        <div className="pt-2">
+          <DataPortPage />
+        </div>
+      )}
+
+      {/* TAB 3: Security, Sync & Reset */}
+      {activeTab === 'security' && (
+        <div className="space-y-6">
 
       {/* Security & Integrity Card */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4">
@@ -571,6 +784,8 @@ export const SettingsPage: React.FC = () => {
           </table>
         </div>
       </div>
+        </div>
+      )}
 
       {/* Edit Company & Manager Details Modal */}
       {showEditModal && (
@@ -843,6 +1058,93 @@ export const SettingsPage: React.FC = () => {
                   className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-600/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   <span>{resetting ? 'جاري التصفير...' : 'تأكيد التصفير والتفريغ'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Branch Modal (Add / Edit) */}
+      {showBranchModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowBranchModal(false);
+          }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 bg-gradient-to-r from-indigo-900 to-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-600 text-white shadow-md">
+                  <MapPin className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base leading-tight">
+                    {editingBranch ? 'تعديل بيانات المقر' : 'إضافة موقع نشاط / مقر جديد'}
+                  </h3>
+                  <p className="text-[11px] text-indigo-300">يظهر كعمود مخزون وخيار استلام وتسليم</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBranchModal(false)}
+                className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white/80 hover:text-white flex items-center justify-center transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveBranch} className="p-6 space-y-4">
+              {branchError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold">
+                  {branchError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  اسم المقر / الموقع <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={branchName}
+                  onChange={(e) => setBranchName(e.target.value)}
+                  placeholder="مثلاً: مخزن كرداسة، الفرع الرئيسي..."
+                  className="w-full border border-slate-300 rounded-xl p-2.5 text-xs font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  العنوان / الوصف التفصيلي (اختياري)
+                </label>
+                <input
+                  type="text"
+                  value={branchAddress}
+                  onChange={(e) => setBranchAddress(e.target.value)}
+                  placeholder="مثلاً: شارع عشماوي، الجيزة..."
+                  className="w-full border border-slate-300 rounded-xl p-2.5 text-xs font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setShowBranchModal(false)}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={branchLoading}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition-all disabled:opacity-50"
+                >
+                  {branchLoading ? 'جاري الحفظ...' : editingBranch ? 'تحديث المقر' : 'إضافة المقر'}
                 </button>
               </div>
             </form>

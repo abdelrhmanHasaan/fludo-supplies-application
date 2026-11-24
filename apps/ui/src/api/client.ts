@@ -110,6 +110,13 @@ export const api = {
     if (params?.search) q.set('search', params.search);
     return apiFetch<any[]>(`/parties?${q.toString()}`);
   },
+  getPartyAlarms: (params?: { is_customer?: boolean; is_supplier?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params?.is_customer !== undefined) q.set('is_customer', String(params.is_customer));
+    if (params?.is_supplier !== undefined) q.set('is_supplier', String(params.is_supplier));
+    return apiFetch<any[]>(`/parties/alarms?${q.toString()}`);
+  },
+  getPartyReservations: (id: string) => apiFetch<any[]>(`/parties/${id}/reservations`),
   createParty: (party: any) => apiFetch<any>('/parties', { method: 'POST', body: JSON.stringify(party) }),
   updateParty: (id: string, party: any) => apiFetch<any>(`/parties/${id}`, { method: 'PUT', body: JSON.stringify(party) }),
   getPartySummary: (id: string) => apiFetch<any>(`/parties/${id}/summary`),
@@ -155,6 +162,8 @@ export const api = {
     apiFetch<any>(`/invoices/sales/${id}/cancel`, { method: 'POST', body: JSON.stringify({ approvalId, reason }) }),
   getPurchaseInvoices: () => apiFetch<any[]>('/invoices/purchase'),
   createPurchaseInvoice: (inv: any) => apiFetch<any>('/invoices/purchase', { method: 'POST', body: JSON.stringify(inv) }),
+  recordInvoicePrint: (data: { invoice_id: string; invoice_kind?: string; mode?: 'plain' | 'with_carry'; carried_balance_snapshot?: number }) =>
+    apiFetch<any>('/invoices/print-log', { method: 'POST', body: JSON.stringify(data) }),
 
   // Payments
   getPayments: (params?: any) => {
@@ -178,6 +187,8 @@ export const api = {
   deleteCashAccount: (id: string) => apiFetch<any>(`/treasury/accounts/${id}`, { method: 'DELETE' }),
   getCashAccountStatement: (id: string) => apiFetch<any>(`/treasury/accounts/${id}/statement`),
   transferCash: (data: any) => apiFetch<any>('/treasury/transfer', { method: 'POST', body: JSON.stringify(data) }),
+  recordCashMovement: (data: { cash_account_id: string; direction: 'in' | 'out'; amount: number; note?: string; movement_date?: string }) =>
+    apiFetch<any>('/treasury/movements', { method: 'POST', body: JSON.stringify(data) }),
   recordCashCount: (data: any) => apiFetch<any>('/treasury/count', { method: 'POST', body: JSON.stringify(data) }),
 
   // Payroll
@@ -237,6 +248,10 @@ export const api = {
   updateCompanyAndManager: (data: any) => apiFetch<any>('/company/manage', { method: 'PUT', body: JSON.stringify(data) }),
   smartDelete: (type: string, id: string, pin: string) => apiFetch<any>('/company/delete-item', { method: 'POST', body: JSON.stringify({ type, id, pin }) }),
   resetOperationalData: (pin: string) => apiFetch<any>('/company/reset-movements', { method: 'POST', body: JSON.stringify({ pin }) }),
+  getBranches: () => apiFetch<any[]>('/company/branches'),
+  createBranch: (data: any) => apiFetch<any>('/company/branches', { method: 'POST', body: JSON.stringify(data) }),
+  updateBranch: (id: string, data: any) => apiFetch<any>(`/company/branches/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteBranch: (id: string) => apiFetch<any>(`/company/branches/${id}`, { method: 'DELETE' }),
 
   // Cloud Sync
   getSyncStatus: () => apiFetch<{

@@ -43,20 +43,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentSection, onSelectSectio
   const { company, logoLetter, setShowSetupModal } = useCompany();
 
   const menuItems: Array<{ key: SectionKey; label: string; icon: any }> = [
-    { key: 'dashboard', label: 'الرئيسية (لوحة التحكم)', icon: LayoutDashboard },
-    { key: 'daily', label: 'اليومية (سريع F2)', icon: CalendarCheck },
-    { key: 'customers', label: 'العملاء وكشوف الحساب', icon: Users },
-    { key: 'suppliers', label: 'الموردين والمشتريات', icon: Truck },
-    { key: 'inventory', label: 'المخزون وحركة البضاعة', icon: Boxes },
-    { key: 'invoices', label: 'الفواتير والطباعة', icon: FileText },
-    { key: 'shipments', label: 'الشحنات والسائقين', icon: Navigation },
-    { key: 'treasury', label: 'الخزينة والبنوك', icon: Wallet },
-    { key: 'expenses', label: 'المصروفات العامة', icon: Receipt },
-    { key: 'equipment', label: 'الأصول والمعدات', icon: Wrench },
-    { key: 'payroll', label: 'الموظفين والرواتب', icon: UserCheck },
-    { key: 'reports', label: 'التقارير المالية', icon: BarChart3 },
-    { key: 'dataport', label: 'استيراد وتصدير (إكسيل/SQL)', icon: Database },
-    { key: 'settings', label: 'الإعدادات والصلاحيات', icon: Settings },
+    { key: 'dashboard', label: 'الرئيسية', icon: LayoutDashboard },
+    { key: 'daily', label: 'يومية', icon: CalendarCheck },
+    { key: 'customers', label: 'العملاء', icon: Users },
+    { key: 'suppliers', label: 'الموردين', icon: Truck },
+    { key: 'treasury', label: 'الخزينة', icon: Wallet },
+    { key: 'invoices', label: 'الفواتير', icon: FileText },
+    { key: 'equipment', label: 'المعدات', icon: Wrench },
+    { key: 'payroll', label: 'الموظفين', icon: UserCheck },
+    { key: 'inventory', label: 'المخزن', icon: Boxes },
+    { key: 'settings', label: 'الإعدادات', icon: Settings },
   ];
 
   return (

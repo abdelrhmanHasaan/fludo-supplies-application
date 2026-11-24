@@ -117,7 +117,7 @@ async function main() {
   const uploadUrl = new URL(`${rawUploadUrl}?name=${encodeURIComponent(FILE_NAME)}`);
 
   await new Promise((resolve, reject) => {
-    const fileStream = fs.createReadStream(FILE_PATH, { highWaterMark: 64 * 1024 });
+    const fileStream = fs.createReadStream(FILE_PATH, { highWaterMark: 128 * 1024 });
     let uploadedBytes = 0;
     let lastLoggedPercent = -1;
 
@@ -158,13 +158,25 @@ async function main() {
     fileStream.on('data', (chunk) => {
       uploadedBytes += chunk.length;
       const percent = Math.floor((uploadedBytes / stat.size) * 100);
-      if (percent % 10 === 0 && percent !== lastLoggedPercent) {
+      if (percent % 5 === 0 && percent !== lastLoggedPercent) {
         lastLoggedPercent = percent;
         console.log(`  Uploading... ${percent}% (${(uploadedBytes / 1024 / 1024).toFixed(1)} / ${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
       }
+      const canWrite = req.write(chunk);
+      if (!canWrite) {
+        fileStream.pause();
+      }
     });
 
-    fileStream.pipe(req);
+    req.on('drain', () => {
+      fileStream.resume();
+    });
+
+    fileStream.on('end', () => {
+      req.end();
+    });
+
+    fileStream.on('error', reject);
   });
 
   console.log('\n🎉 ALL DONE! The installer is published and live on GitHub!');

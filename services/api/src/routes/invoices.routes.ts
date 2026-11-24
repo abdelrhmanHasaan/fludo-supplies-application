@@ -347,4 +347,19 @@ export const invoicesRoutes: FastifyPluginAsync = async (fastify) => {
 
     return { status: 'created', invoiceId };
   });
+
+  // Record Invoice Print Event (Plain vs with Carried Balance Snapshot)
+  fastify.post('/print-log', async (req, reply) => {
+    const { invoice_id, invoice_kind, mode, carried_balance_snapshot } = req.body as any;
+    if (!invoice_id) {
+      return reply.status(400).send({ error: 'معرف الفاتورة مطلوب' });
+    }
+    const res = await pool.query(
+      `INSERT INTO app.invoice_prints (invoice_id, invoice_kind, mode, carried_balance_snapshot)
+       VALUES ($1, COALESCE($2, 'sale'), COALESCE($3, 'plain'), COALESCE($4, 0))
+       RETURNING *`,
+      [invoice_id, invoice_kind || 'sale', mode || 'plain', carried_balance_snapshot || 0]
+    );
+    return { status: 'success', log: res.rows[0] };
+  });
 };

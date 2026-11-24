@@ -3,25 +3,51 @@ import { pool, withTransaction } from '../config/db.js';
 import { performPartyNetting } from '../domain/payments.js';
 
 export const partiesRoutes: FastifyPluginAsync = async (fastify) => {
-  // List Parties (Customers & Suppliers)
+  // Alarms Endpoint (Countdown Expired & Balance Outstanding)
+  fastify.get('/alarms', async (req, reply) => {
+    const { is_customer, is_supplier } = req.query as any;
+    let q = 'SELECT * FROM app.v_party_alarms WHERE 1=1';
+    const params: any[] = [];
+    if (is_customer !== undefined) {
+      params.push(is_customer === 'true');
+      q += ` AND is_customer = $${params.length}`;
+    }
+    if (is_supplier !== undefined) {
+      params.push(is_supplier === 'true');
+      q += ` AND is_supplier = $${params.length}`;
+    }
+    q += ' ORDER BY countdown_days ASC, party_name ASC';
+    const res = await pool.query(q, params);
+    return res.rows;
+  });
+
+  // List Parties (Customers & Suppliers) using unified v_party_summary
   fastify.get('/', async (req, reply) => {
     const { is_customer, is_supplier, search } = req.query as any;
 
     let query = `
       SELECT 
         p.id,
+        COALESCE(p.code, s.party_code, '') AS code,
         p.name,
         p.phone,
         p.address,
         p.is_customer,
         p.is_supplier,
         p.notes,
-        COALESCE(SUM(CASE WHEN a.system_role = 'receivable' THEN (l.debit - l.credit) ELSE 0 END), 0) AS customer_balance,
-        COALESCE(SUM(CASE WHEN a.system_role = 'payable' THEN (l.credit - l.debit) ELSE 0 END), 0) AS supplier_balance,
+        p.settlement_due_date,
+        (p.settlement_due_date - CURRENT_DATE)::integer AS countdown_days,
+        COALESCE(s.net_balance, 0)::numeric(16,2) AS net_balance,
+        COALESCE(s.balance_type, 'خالص') AS balance_type,
+        COALESCE(s.total_purchases, 0)::numeric(16,2) AS total_purchases,
+        COALESCE(s.total_payments, 0)::numeric(16,2) AS total_payments,
+        COALESCE(s.reserved_undelivered, 0)::numeric(16,3) AS reserved_undelivered,
+        -- Backward-compatibility aliases
+        COALESCE(s.net_balance, 0)::numeric(16,2) AS customer_balance,
+        COALESCE(s.net_balance, 0)::numeric(16,2) AS supplier_balance,
         TO_CHAR(p.created_at, 'YYYY-MM-DD') AS created_at
       FROM app.parties p
-      LEFT JOIN app.journal_lines l ON l.party_id = p.id
-      LEFT JOIN app.accounts a ON a.id = l.account_id
+      LEFT JOIN app.v_party_summary s ON s.party_id = p.id
       WHERE NOT p.is_deleted
     `;
 
@@ -37,37 +63,42 @@ export const partiesRoutes: FastifyPluginAsync = async (fastify) => {
       params.push(is_supplier === 'true');
     }
     if (search) {
-      query += ` AND (p.name ILIKE $${pIdx} OR p.phone ILIKE $${pIdx})`;
+      query += ` AND (p.name ILIKE $${pIdx} OR p.phone ILIKE $${pIdx} OR p.code ILIKE $${pIdx})`;
       params.push(`%${search}%`);
       pIdx++;
     }
 
-    query += ` GROUP BY p.id ORDER BY p.name`;
+    query += ` ORDER BY p.created_at DESC, p.name ASC`;
 
     const res = await pool.query(query, params);
     return res.rows.map((r) => ({
       ...r,
+      net_balance: parseFloat(r.net_balance),
       customer_balance: parseFloat(r.customer_balance),
       supplier_balance: parseFloat(r.supplier_balance),
+      total_purchases: parseFloat(r.total_purchases),
+      total_payments: parseFloat(r.total_payments),
+      reserved_undelivered: parseFloat(r.reserved_undelivered),
     }));
   });
 
   // Create Party
   fastify.post('/', async (req, reply) => {
-    const { name, phone, address, is_customer, is_supplier, notes } = req.body as any;
-    if (!name) return reply.status(400).send({ error: 'اسم الطرف مطلوب' });
+    const { name, phone, address, is_customer, is_supplier, notes, settlement_due_date } = req.body as any;
+    if (!name || !name.trim()) return reply.status(400).send({ error: 'اسم الطرف مطلوب' });
 
     const res = await pool.query(
-      `INSERT INTO app.parties (name, phone, address, is_customer, is_supplier, notes)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO app.parties (name, phone, address, is_customer, is_supplier, notes, settlement_due_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
-        name,
-        phone || null,
-        address || null,
+        name.trim(),
+        phone?.trim() || null,
+        address?.trim() || null,
         is_customer ?? true,
         is_supplier ?? false,
-        notes || null,
+        notes?.trim() || null,
+        settlement_due_date || null,
       ]
     );
 
@@ -132,6 +163,16 @@ export const partiesRoutes: FastifyPluginAsync = async (fastify) => {
       LEFT JOIN app.equipment eq ON eq.id = sh.vehicle_id
       WHERE si.party_id = $1 AND NOT sh.is_deleted AND NOT si.is_deleted
       ORDER BY sh.departed_at DESC NULLS LAST, sh.created_at DESC`,
+      [id]
+    );
+    return res.rows;
+  });
+
+  // Party Reservations Progress (from v_reservation_lines)
+  fastify.get('/:id/reservations', async (req, reply) => {
+    const { id } = req.params as any;
+    const res = await pool.query(
+      `SELECT * FROM app.v_reservation_lines WHERE party_id = $1 ORDER BY created_at DESC`,
       [id]
     );
     return res.rows;
